@@ -1,0 +1,4 @@
+# Python 编译缓存（运行 parse_docx.py 后产生）
+__pycache__/
+*.pyc
+*.pyo
