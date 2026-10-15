@@ -8,7 +8,10 @@
 
 | Skill                               | 说明                                                         |
 | ----------------------------------- | ------------------------------------------------------------ |
+| [report-writer](report-writer/)     | 按模板撰写 Word 报告（实验报告为主场景）：插入而非覆盖、图表题注与交叉引用、页面利用率调优。 |
 | [report-reviewer](report-reviewer/) | 温州大学计算机与人工智能学院实验报告审核，覆盖网络工程、编程、公选课三类实验。 |
+
+`report-writer` 与 `report-reviewer` 配对：**一个写、一个审**。写完用 reviewer 自审一遍。
 
 后续会按需添加更多 Skill。
 
@@ -19,6 +22,10 @@ Bocchiid-Self-Skills/
 ├── README.md
 ├── LICENSE
 ├── .gitignore
+├── report-writer/
+│   ├── SKILL.md
+│   ├── references/
+│   └── scripts/
 └── report-reviewer/
     ├── SKILL.md
     ├── references/
