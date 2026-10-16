@@ -3,6 +3,8 @@
 
 用法：
     python docx_env.py --check              # 输出 JSON 环境报告
+    python docx_env.py --plan <文件>         # 写入方案（形态 + Target 候选 + 该问什么）
+    python docx_env.py --cover <文件>        # 封面/表头字段清单（哪些还空着）
     python docx_env.py --describe <文件>     # 打印文档结构，标出可写入区域
 
 --check 输出：
@@ -142,16 +144,57 @@ def show_plan(path):
     write(K.plan(Document(path)))
 
 
+def show_cover(path):
+    """列出封面/表头字段及当前值，分「待填」和「已填」两拨。
+
+    这一步**只勘察不改动**。缺值的字段要拿去问用户，或者让用户自己手填；
+    填的时候用 K.fill_cover()，绝不要用 put()（那会把标签一起清掉）。
+    """
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from docx import Document
+    import docx_kit as K
+
+    fields = K.cover_fields(Document(path))
+    if not fields:
+        write('没有识别到封面/表头字段。\n'
+              '（可能是纯图片封面、或标签写法特殊——人工看一眼 --describe 的输出。）')
+        return
+    todo = [f for f in fields if not f['value']]
+    done = [f for f in fields if f['value']]
+    write('封面/表头字段：共 %d 个，其中 %d 个还空着' % (len(fields), len(todo)))
+    write('')
+    for tag, group in (('待填', todo), ('已填', done)):
+        if not group:
+            continue
+        write('%s：' % tag)
+        for f in group:
+            write('    %-12s %-22s %s' % (
+                f['label'],
+                ('值「%s」' % f['value'][:18]) if f['value'] else '(空)',
+                f['where'] + ('  [%s]' % f['kind'] if f['kind'] != 'inline' else '')))
+        write('')
+    if todo:
+        write('下一步（**先问用户**，姓名/学号/日期绝不猜）：')
+        write('    K.fill_cover(doc, {%s})' % ', '.join(
+            "'%s': '…'" % f['label'] for f in todo[:3]))
+        write('用户要是说自己手填，就一个字都别动封面，并在交付说明里写明"封面字段留空待填"。')
+        write('')
+    write('⚠️ 别用 put()/Target.cell() 写封面：那会清空整格，标签、下划线、框一起没。')
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--check', action='store_true')
     ap.add_argument('--describe', metavar='文件', help='全量结构转储（含所有段落）')
     ap.add_argument('--plan', metavar='文件', help='写入方案建议（先跑这个）')
+    ap.add_argument('--cover', metavar='文件', help='封面/表头字段清单（该问用户什么）')
     a = ap.parse_args()
     if a.check:
         print(json.dumps(check_env(), ensure_ascii=False, indent=2))
     elif a.plan:
         show_plan(a.plan)
+    elif a.cover:
+        show_cover(a.cover)
     elif a.describe:
         describe(a.describe)
     else:

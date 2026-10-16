@@ -40,13 +40,17 @@ cell.append(new_p(tiny=True))    # 1pt 段落标记，不占一整行
 schema 对子元素顺序是强约束的。常见的：
 
 ```
-w:pPr  : pStyle → keepNext → keepLines → snapToGrid → spacing → ind → jc → rPr
-w:rPr  : rFonts → b → bCs → noProof → color → sz → szCs
+w:pPr  : pStyle → keepNext → keepLines → shd → snapToGrid → spacing → ind → jc → rPr
+w:rPr  : rFonts → b → bCs → noProof → color → sz → szCs → u → vertAlign
 w:tblPr: tblW → jc → tblBorders → tblLayout → tblCellMar → tblLook
 w:trPr : cantSplit → trHeight → tblHeader → tblCellSpacing → jc
 ```
 
 `tblLayout` 排在 `tblCellMar` 后面就会损坏文件——这种错误格外难查。
+
+⚠️ **给 run 加下划线（封面填值常用）时，`w:u` 要插在 `sz`/`szCs` 之后、`vertAlign` 之前。**
+直接 `rPr.append(u)` 在已有 `vertAlign`（上标引用）的 run 上会得到非法顺序。
+`docx_kit._ensure_underline()` 是按这个规则插的。
 
 ### 3. `powershell -File` 不同步工作目录
 
@@ -71,6 +75,39 @@ Windows PowerShell 5.1 把 `.ps1` 文件按 ANSI 解析（除非有 BOM），所
 - 脚本文件保持纯 ASCII（`word_com.ps1` 就是这个原则）；
 - 中文路径通过命令行参数传进去没问题；
 - 实在要在脚本里写死中文路径，就走 ASCII 临时目录中转，最后再 `cp` 回去。
+
+## 嵌套表格（框里的题目表）
+
+`w:tc` 的直接子元素可以是 `w:tbl` —— 模板里的题目表、学生信息表就是这么放的。
+
+| 要干的事 | 正确做法 |
+| --- | --- |
+| 列出**所有**表格 | 递归：`docx_kit.iter_tables(doc.element.body)`；`doc.tables` 只给顶层 |
+| 结构指纹 | **必须**递归（`snapshot()` 已改）——只盯顶层的话，内嵌表被改坏了看不见 |
+| 判断"格子里有没有表" | `tc.findall(qn('w:tbl'))`（直接子元素，别用 `iter`） |
+| 判断"格子空不空" | 只看 `tc.findall(qn('w:p'))` 的文字。`cell.text` 会**把内嵌表格里的字也算进去** |
+| 往这种格子写内容 | `Target.after('锚点')` 或 `Cursor(..., clear=False)`，**不要清空** |
+
+⚠️ 清空格子（删 `w:p`）时内嵌表格会**浮到格子最前面**——它本来在某个说明段落下面，
+清完上面的文字没了、表格顶上去，版式就毁了。所以 `check_target()` 见到目标格里有
+`w:tbl` 直接拦下来（见 `template-analysis.md` 第七节）。
+
+⚠️ 删完段落，单元格的最后一个块级元素可能从 `w:p` 变成 `w:tbl`，于是"昨天还能打开的
+文档"突然报损坏（见上面第 1 条）。`finish()` 会往上找最近的单元格补一个 1pt 段落，
+锚点在单元格里时也管用。
+
+## 往既有的 run 里填值（封面字段）
+
+封面字段不能"重写这一段"，只能**只动值那几个 run**（`docx_kit.fill_field()`）：
+
+- 先按**字符**定位「标签：」结束的位置，落到第几个 run 上就把那个 run 从该字符处
+  切开（`_split_run_at`）——所以「姓」「　」「名」「：」四个 run 的写法也不会被破坏。
+- 标签之后如果全是空白 run（下划线 / 空格 / 空文字），**第一个填值、其余置空**。
+  置空而不是删除：格式（下划线、字号）留在原地，肉眼就是"那条下划线被写上了字"。
+- "这是空白 run"的判据是 `text.strip('_＿ \t　') == ''`——**全角空格 `　` 也要算进去**，
+  模板爱用它占位。
+- 一个 run 里挤着「标签：值」时切开后只替换值那一半，标签一个字不动。
+- 写 `<w:t>` 时记得 `xml:space="preserve"`，否则值前后的空格会被吃掉。
 
 ## 域（域的缓存值必须填对）
 
