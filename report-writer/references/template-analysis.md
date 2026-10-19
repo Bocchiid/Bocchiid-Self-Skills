@@ -232,7 +232,7 @@ python scripts/docx_env.py --cover 模板.docx     # --plan 里也带一份
 
 ```python
 before = K.snapshot(d)
-filled, missed, manual = K.fill_cover(d, {'姓名': '张三', '学号': '00000000'})
+filled, missed, manual = K.fill_cover(d, {'姓名': '示例姓名', '学号': '00000000'})
 assert not K.diff_structure(before, K.snapshot(d))   # 结构必须零变化
 ```
 

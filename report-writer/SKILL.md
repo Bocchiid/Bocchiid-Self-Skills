@@ -131,7 +131,7 @@ K.Target.at_end()               # 追加到文末
 3. **填**（用户给了值才填）：
    ```python
    before = K.snapshot(d)
-   filled, missed, manual = K.fill_cover(d, {'姓名': '张三', '题目': '校园网设计'})
+   filled, missed, manual = K.fill_cover(d, {'姓名': '示例姓名', '题目': '示例题目'})
    assert not K.diff_structure(before, K.snapshot(d))   # 结构必须零变化
    ```
    `fill_cover` **只改值**：优先复用模板留的空白下划线 run（格式原样保留），

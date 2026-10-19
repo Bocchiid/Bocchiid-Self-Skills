@@ -1,4 +1,4 @@
-# Bocchiid-Self-Skills
+# Self-Skills
 
 个人维护的 Agent Skills 合集。
 
@@ -42,7 +42,7 @@
 ## 目录结构
 
 ```
-Bocchiid-Self-Skills/
+self-skills/
 ├── README.md
 ├── LICENSE
 ├── .gitignore

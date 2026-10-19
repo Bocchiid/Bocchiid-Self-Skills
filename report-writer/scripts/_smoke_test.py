@@ -101,9 +101,9 @@ def main():
     print('\n=== 3. 填封面：标签、下划线、内嵌表都不能动 ===')
     before = K.snapshot(d)
     filled, missed, manual = K.fill_cover(d, {
-        '姓名': '张三', '学号': '00000000', '班级': '示例班级',
+        '姓名': '示例姓名', '学号': '00000000', '班级': '示例班级',
         '日期': '2026年10月16日', '题目': '示例课程实验',
-        '指导教师': '李四'})
+        '指导教师': '示例教师'})
     for line in filled:
         print('    填 ', line)
     check('六项全部命中', not missed, missed)
@@ -221,18 +221,18 @@ def main():
     reps_before = len(K._tail_runs(pl, '姓名'))
     check('标签后精确取到 2 个空白 run', reps_before == 2, reps_before)
     base = K.snapshot(d5)
-    K.fill_cover(d5, {'姓名': '张三', '题目': '新题目'})
+    K.fill_cover(d5, {'姓名': '示例姓名', '题目': '新题目'})
     check('结构没变', not K.diff_structure(base, K.snapshot(d5)),
           K.diff_structure(base, K.snapshot(d5)))
     pl = d5.tables[0].cell(0, 0).paragraphs[0]
     check('逐字拆开的标签没被动', K._p_text(pl).startswith('姓　名：'),
           K._p_text(pl))
-    check('值是「张三」', K._p_text(pl) == '姓　名：张三', K._p_text(pl))
+    check('值是「示例姓名」', K._p_text(pl) == '姓　名：示例姓名', K._p_text(pl))
     runs = pl._p.findall(K.qn('w:r'))
-    filled = [r for r in runs if K._run_text(r) == '张三']
+    filled = [r for r in runs if K._run_text(r) == '示例姓名']
     check('值写进了原来那个下划线 run', len(filled) == 1)
     check('下划线保留', filled and filled[0].find(K.qn('w:rPr')) is not None
-          and K._run_text(filled[0]) == '张三'
+          and K._run_text(filled[0]) == '示例姓名'
           and filled[0].find(K.qn('w:rPr')).find(K.qn('w:u')) is not None,
           K._run_text(filled[0]))
     check('多余的空白下划线被清空',
