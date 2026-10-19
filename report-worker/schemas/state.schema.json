@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "report-worker/state.schema.json",
+  "title": "report-worker run state",
+  "type": "object",
+  "required": ["run_id", "workspace", "phase", "autonomy", "environment", "plan", "execution", "report"],
+  "properties": {
+    "run_id": {"type": "string"},
+    "workspace": {"type": "string"},
+    "created_at": {"type": "string"},
+    "updated_at": {"type": "string"},
+    "last_heartbeat": {"type": "string"},
+    "session_log": {"type": "string"},
+    "phase": {
+      "enum": ["INIT", "PLAN", "PLAN_FREEZE", "EXECUTE", "STEP_VERIFY",
+               "EVIDENCE_REVIEW", "RECAPTURE", "WRITE", "REVIEW", "TRIAGE",
+               "WAITING_USER", "DONE", "BLOCKED"]
+    },
+    "previous_phase": {"type": ["string", "null"]},
+    "autonomy": {"enum": ["observe", "assist", "auto", "full"]},
+    "environment": {
+      "type": "object",
+      "properties": {
+        "type": {"enum": ["local", "wsl", "ssh"]},
+        "target": {"type": "string"}
+      }
+    },
+    "task": {
+      "type": "object",
+      "properties": {
+        "name": {"type": "string"},
+        "materials": {"type": "array", "items": {"type": "string"}},
+        "template": {"type": "string"},
+        "report": {"type": "string"}
+      }
+    },
+    "plan": {
+      "type": "object",
+      "properties": {
+        "path": {"type": "string"},
+        "version": {"type": "string"},
+        "frozen": {"type": "boolean"},
+        "gate": {}
+      }
+    },
+    "execution": {
+      "type": "object",
+      "properties": {
+        "stage": {"type": "string"},
+        "step": {"type": "string"},
+        "attempts": {"type": "object"},
+        "completed": {"type": "array", "items": {"type": "string"}},
+        "skipped": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "properties": {
+        "path": {"type": "string"},
+        "l1_total": {"type": "integer"},
+        "l1_pass": {"type": "integer"}
+      }
+    },
+    "report": {
+      "type": "object",
+      "properties": {
+        "round": {"type": "integer", "minimum": 1},
+        "path": {"type": "string"},
+        "review_path": {"type": "string"}
+      }
+    },
+    "budgets": {
+      "type": "object",
+      "properties": {
+        "max_report_rounds": {"type": "integer"},
+        "max_step_attempts": {"type": "integer"},
+        "max_evidence_rounds": {"type": "integer"},
+        "max_actions": {"type": "integer"},
+        "max_minutes": {"type": "integer"},
+        "heartbeat_seconds": {"type": "integer"},
+        "max_log_bytes": {"type": "integer"},
+        "max_log_files": {"type": "integer"}
+      }
+    },
+    "history": {"type": "array"}
+  }
+}

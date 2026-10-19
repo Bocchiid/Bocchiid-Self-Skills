@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "report-worker/action.schema.json",
+  "title": "report-worker GUI action",
+  "type": "object",
+  "required": ["id", "step", "window", "target", "action", "expect"],
+  "properties": {
+    "id": {"type": "string"},
+    "step": {"type": "string"},
+    "app": {"type": "string"},
+    "window": {"type": "string"},
+    "before": {"type": "string"},
+    "after": {"type": "string"},
+    "target": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": {"enum": ["uia", "point", "keys", "text", "manual"]},
+        "name": {"type": "string"},
+        "automation_id": {"type": "string"},
+        "x_pct": {"type": "number", "minimum": 0, "maximum": 1},
+        "y_pct": {"type": "number", "minimum": 0, "maximum": 1},
+        "button": {"enum": ["left", "right", "middle"]},
+        "double": {"type": "boolean"},
+        "keys": {"type": "string"},
+        "text": {"type": "string"}
+      }
+    },
+    "action": {"type": "string"},
+    "expect": {
+      "oneOf": [
+        {"type": "string"},
+        {
+          "type": "object",
+          "required": ["type"],
+          "properties": {
+            "type": {"enum": ["uia_text", "uia_control", "screenshot_changed",
+                              "file_exists", "manual"]},
+            "value": {"type": "string"},
+            "name": {"type": "string"},
+            "automation_id": {"type": "string"},
+            "threshold": {"type": "number"},
+            "path": {"type": "string"},
+            "description": {"type": "string"},
+            "timeout_s": {"type": "number"}
+          }
+        }
+      ]
+    },
+    "timeout_s": {"type": "number"},
+    "settle_s": {"type": "number"}
+  }
+}

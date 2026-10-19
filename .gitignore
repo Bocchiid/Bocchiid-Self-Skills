@@ -2,3 +2,7 @@
 __pycache__/
 *.pyc
 *.pyo
+
+# report-worker 的任务级环境（不应提交）
+.venv/
+.tools/

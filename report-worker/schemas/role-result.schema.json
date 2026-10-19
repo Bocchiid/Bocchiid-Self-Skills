@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "report-worker/role-result.schema.json",
+  "title": "report-worker role result",
+  "type": "object",
+  "required": ["role", "status", "summary"],
+  "properties": {
+    "role": {
+      "enum": ["planner", "operator", "screenshot_reviewer", "writer", "reviewer", "triage"]
+    },
+    "status": {"enum": ["ok", "needs_user", "blocked"]},
+    "summary": {"type": "string"},
+    "artifacts": {"type": "array", "items": {"type": "string"}},
+    "blockers": {"type": "array", "items": {"type": "string"}},
+    "questions": {"type": "array", "items": {"type": "string"}},
+    "next": {"type": "string"},
+    "step": {"type": "string"},
+    "verdict": {"type": "string"},
+    "verdicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string"},
+          "file": {"type": "string"},
+          "step": {"type": "string"},
+          "verdict": {"type": "string"},
+          "missing": {"type": "array", "items": {"type": "string"}},
+          "recapture": {"type": "string"}
+        }
+      }
+    },
+    "recapture": {"type": "array", "items": {"type": "string"}},
+    "round": {"type": "integer"},
+    "score": {"type": "string"},
+    "blocking": {"type": "array"},
+    "suggestions": {"type": "array"},
+    "unresolved": {"type": "array", "items": {"type": "string"}}
+  }
+}
