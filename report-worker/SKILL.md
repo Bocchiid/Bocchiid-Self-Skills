@@ -32,6 +32,10 @@ worker 不重复 planner/writer/reviewer 的规则。它只做四件事：
 缺关键材料时说明“缺什么、影响哪一步/哪条证据/哪一章”；用户说没有就按没有规划，
 不反复追问，把“没有”记为假设。
 
+**交互硬闸门**：先写 `材料清单.md`（已有/还缺/用户确认），再用
+`worker.py decide --key ... --value ... --note ...` 记录用户回答；
+没有这两样，`worker.py advance --to PLAN` 会被拒绝。
+
 **依赖检查**：worker 需要 `report-planner`、`report-writer`、`report-reviewer`。
 找不到就先问用户安装/复制，缺依赖不能硬跑。
 
@@ -186,7 +190,7 @@ CLI 用来高效执行，GUI 用来出真实截图，两者不互相冒充。
 | 脚本 | 用途 |
 | --- | --- |
 | `env.py` | 探测 OS/依赖/截图/GUI/Word；检查三个 skill 是否存在 |
-| `worker.py` | 状态机：`init/status/next/record/advance/freeze/gate/complete-step/doctor/logs/resume/cleanup` |
+| `worker.py` | 状态机：`init/status/next/record/advance/freeze/gate/decide/complete-step/doctor/logs/resume/cleanup` |
 | `actions.py` | 命令执行、分类、策略、日志；venv/临时变量；local/WSL/SSH |
 | `capture.py` | 截图、窗口、裁剪、证据 manifest |
 | `desktop.py` | GUI：窗口聚焦、UIA、键鼠、可见终端、通知 |

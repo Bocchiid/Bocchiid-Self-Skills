@@ -24,10 +24,27 @@ ANALYZE → COLLECT → ORGANIZE → PLAN → PLAN_FREEZE
 | BLOCKED | 预算/权限/环境/人工 | 阻塞说明 |
 | WAITING_USER | 等用户补材料/做物理步骤/确认 | 用户回传 |
 
+## ANALYZE 闸门（硬）
+
+进入 PLAN 前必须：
+
+- `材料清单.md` 存在，含“已有/还缺/用户确认”；
+- `_worker/decisions.json` 至少有 1 条用户决策（`worker.py decide` 写入）；
+- 模板/评分表冲突在 `plan.json.conflicts` 里没有 `pending`。
+
+```bash
+python worker.py gate --name analyze
+```
+
+没通过不允许 `advance --to PLAN`。
+
 ## 冻结
 
 **未冻结不执行。** 用户确认前只做分析、收集、整理、规划。
 用户改方案就回 PLAN；不偷偷改计划继续。
+
+计划里的 `conflicts` 用 `skip|keep|pending`：
+`pending` 不允许冻结；`skip` 不写不扣分；`keep` 按 location 写/审。
 
 ## 步骤闸门
 

@@ -200,9 +200,73 @@ def validate_plan(plan: Any) -> dict:
             if eid not in evidence_ids:
                 errors.append(f"step {s.get('id', '?')} references unknown evidence: {eid}")
 
+    conflicts = _as_list(plan.get("conflicts"))
+    seen_conflicts: set[str] = set()
+    for i, c in enumerate(conflicts):
+        if not isinstance(c, dict):
+            errors.append(f"conflicts[{i}] is not an object")
+            continue
+        cid = str(c.get("id", ""))
+        if not cid:
+            errors.append(f"conflicts[{i}] missing id")
+        elif cid in seen_conflicts:
+            errors.append(f"duplicate conflict id: {cid}")
+        seen_conflicts.add(cid)
+        if not _nonempty(str(c.get("requirement", ""))):
+            errors.append(f"conflict {cid or i} missing requirement")
+        decision = str(c.get("decision", "")).lower()
+        if decision not in ("skip", "keep", "pending"):
+            errors.append(f"conflict {cid or i} decision must be skip|keep|pending")
+        elif decision == "pending":
+            errors.append(f"conflict {cid or i} is pending user decision; "
+                          f"ask the user and set skip/keep before freeze")
+
     return {"ok": not errors, "errors": errors, "warnings": warnings,
             "counts": {"purposes": len(purposes), "stages": len(stages),
-                       "steps": len(steps), "evidence": len(evidence)}}
+                       "steps": len(steps), "evidence": len(evidence),
+                       "conflicts": len(conflicts)}}
+
+
+def analyze_gate(workspace: Path, state: dict | None = None) -> dict:
+    """Hard gate: materials inventoried and user decisions recorded."""
+    errors: list[str] = []
+    warnings: list[str] = []
+    materials = workspace / "材料清单.md"
+    if not materials.exists():
+        errors.append("材料清单.md missing: inventory user-provided and missing materials")
+    else:
+        try:
+            text = materials.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            text = ""
+            errors.append(f"材料清单.md unreadable: {exc}")
+        if "已有" not in text:
+            errors.append("材料清单.md must have a 已有/已提供 section")
+        if "还缺" not in text and "缺口" not in text:
+            errors.append("材料清单.md must have a 还缺/缺口 section")
+        if "用户确认" not in text and "用户决策" not in text:
+            warnings.append("材料清单.md does not mention 用户确认/用户决策; "
+                            "record answers with worker.py decide")
+    decisions: list = []
+    if isinstance(state, dict):
+        decisions = _as_list(state.get("decisions"))
+    if not decisions:
+        dpath = workspace / "_worker" / "decisions.json"
+        data = read_json(dpath, {})
+        if isinstance(data, dict):
+            decisions = _as_list(data.get("items"))
+        elif isinstance(data, list):
+            decisions = data
+    if not decisions:
+        errors.append("no user decisions recorded; run worker.py decide "
+                      "--key materials --value complete/no --note ...")
+    plan = read_json(workspace / "_worker" / "plan.json")
+    if isinstance(plan, dict):
+        for c in _as_list(plan.get("conflicts")):
+            if isinstance(c, dict) and str(c.get("decision", "")).lower() == "pending":
+                errors.append(f"conflict {c.get('id', '?')} is still pending user decision")
+    return {"ok": not errors, "errors": errors, "warnings": warnings,
+            "decisions": len(decisions), "materials": str(materials)}
 
 
 def _get_stdout(result: dict, workspace: Path) -> str:
@@ -546,6 +610,9 @@ def main() -> int:
     ap.add_argument("--workspace", default=".")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
+    p = sub.add_parser("analyze")
+    p.set_defaults(cmd_name="analyze")
+
     p = sub.add_parser("plan")
     p.add_argument("--file", default="_worker/plan.json")
     p.set_defaults(cmd_name="plan")
@@ -579,7 +646,10 @@ def main() -> int:
     args = ap.parse_args()
     workspace = _workspace_arg(args.workspace)
 
-    if args.cmd_name == "plan":
+    if args.cmd_name == "analyze":
+        state = read_json(workspace / "_worker" / "state.json", {})
+        result = analyze_gate(workspace, state)
+    elif args.cmd_name == "plan":
         path = Path(args.file)
         if not path.is_absolute():
             path = workspace / path

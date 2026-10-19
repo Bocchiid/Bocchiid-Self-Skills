@@ -35,6 +35,16 @@ python "<SKILL_DIR>/scripts/worker.py" --workspace "<WS>" set --agent-window "<�
 一次问完，不要边做边问。关键材料缺失时说明影响；用户说没有就按没有规划，
 把“没有”记为假设，不反复追问。
 
+写 `材料清单.md`（已有/还缺/用户确认），并用 `decide` 记录用户回答：
+
+```bash
+python "<SKILL_DIR>/scripts/worker.py" --workspace "<WS>" decide \
+  --key materials --value no --note "用户确认没有评分表"
+python "<SKILL_DIR>/scripts/worker.py" --workspace "<WS>" gate --name analyze
+```
+
+**没有材料清单 + 至少一条用户决策，不能进 PLAN。**
+
 主动问：
 
 - 实际方案：设备限制、老师口头要求、替代做法、分组；

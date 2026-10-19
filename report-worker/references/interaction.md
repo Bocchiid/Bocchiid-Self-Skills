@@ -37,6 +37,37 @@ python scripts/worker.py --workspace <WS> set --agent-window "<标题>"
 
 用户说没有就接受，不反复追问。
 
+### 材料清单模板
+
+```markdown
+# 材料清单
+
+## 已有
+- [x] 指导书：<路径>
+- [x] 模板：<路径>
+
+## 还缺
+- [ ] 评分表：影响证据重点和写作深度
+- [ ] 实际方案：影响步骤和差异说明
+
+## 用户确认
+- 用户确认：没有评分表；按通用流程规划
+- 用户确认：没有往届成品；只按模板格式
+```
+
+### 记录用户决策
+
+每次用户回答“有/没有/不需要/这样改”都用命令落盘，ANALYZE 闸门会检查：
+
+```bash
+python scripts/worker.py --workspace <WS> decide \
+  --key materials --value no --note "用户确认没有评分表，按通用流程规划"
+python scripts/worker.py --workspace <WS> decide \
+  --key conflict.C1 --value skip --note "模板没有参考文献区，用户确认不保留"
+```
+
+没有 `材料清单.md` 和至少一条 decision，`worker.py advance --to PLAN` 会被拒绝。
+
 ## 2. 执行前
 
 需要 GUI/截图时：
