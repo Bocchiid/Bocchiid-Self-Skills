@@ -5,13 +5,27 @@
 helper 把内容塞进模板的可编写区域。不要用 python-docx 重建文档——模板的框、
 页眉页脚、成绩表、样式定义都在里面，重建必丢。
 
+三块内容要分开对待：
+
+| 区域 | 能不能写 | 怎么写 |
+| --- | --- | --- |
+| **封面 / 表头字段**（姓名、学号、题目…） | 能，但**只能填值** | `K.cover_fields()` 勘察 → 问用户 → `K.fill_cover()` |
+| **正文编写区** | 能 | `K.Cursor` + `K.Target` |
+| **内嵌表格**（题目表、信息表、评分表） | **不能整格清空** | 用 `Target.after('锚点')` 或 `Cursor(..., clear=False)` |
+
     import sys; sys.path.insert(0, r'<skill>/scripts')
     from docx import Document
     import docx_kit as K
 
     d = Document('work.docx')            # 由 word_com.ps1 从 .doc 转来
-    frame = K.find_frame(d)              # 定位那个“框”
-    cell = K.editable_cell(frame, row=3) # 要填的单元格
+
+    # ① 封面：只填用户给了值的字段，标签/下划线/图片一字不动
+    for e in K.cover_fields(d):
+        print(e['where'], e['label'], repr(e['value']))
+    K.fill_cover(d, {'姓名': '张三', '学号': '2121...'})
+
+    # ② 正文：定位那个“框”，往里写（不要清空含内嵌表格的格子）
+    cell = K.editable_cell(K.find_frame(d)[0], row=3)
     K.clear_cell(cell, keep=1)           # 保留模板原有的标题段
 
     caps = K.Captions()
@@ -53,11 +67,12 @@ def E(tag, **attrs):
 
 
 def rpr(fonts=None, eastasia=None, bold=False, color=None, sz=None,
-        noproof=False, superscript=False, hint='eastAsia'):
+        noproof=False, superscript=False, underline=False, hint='eastAsia'):
     """构造 <w:rPr>。子元素顺序必须符合 OOXML schema，写错 Word 会判定文件损坏：
-    rFonts → b → bCs → noProof → color → sz → vertAlign。
+    rFonts → b → bCs → noProof → color → sz → u → vertAlign。
 
-    superscript=True 生成上标（文献引用 [1] 要的右上角标）。"""
+    superscript=True 生成上标（文献引用 [1] 要的右上角标）。
+    underline=True 生成下划线（封面字段填值常用）。"""
     r = OxmlElement('w:rPr')
     if fonts or eastasia or hint:
         f = OxmlElement('w:rFonts')
@@ -78,6 +93,8 @@ def rpr(fonts=None, eastasia=None, bold=False, color=None, sz=None,
         r.append(E('w:color', val=color))
     if sz:
         r.append(E('w:sz', val=str(sz)))
+    if underline:
+        r.append(E('w:u', val='single'))
     if superscript:
         r.append(E('w:vertAlign', val='superscript'))
     return r if len(r) else None
@@ -208,8 +225,45 @@ def row_looks_like_rubric(tbl_el, row_idx, look_up=3):
 
 
 def tables(doc):
-    """顶层表格元素列表（按文档顺序）。"""
+    """**顶层**表格元素列表（按文档顺序）。
+
+    注意与 `all_tables()` 的区别：`Target.cell(table=N)` 里的 N 数的是这个
+    顶层序号；而结构校验要用 `all_tables()`——它连内嵌表格一起管。
+    """
     return doc.element.body.findall(qn('w:tbl'))
+
+
+def iter_tables(root, prefix=''):
+    """递归收集表格，产出 `(标签, 表元素)`。
+
+    为什么必须递归：模板里除了最外面那个框，多半还有**内嵌表格**——题目表格、
+    学生信息表、评分表，全都长在某个单元格里。不递归的话它们不在结构指纹里，
+    **被改坏了也不会报出来**。
+
+    标签形如 `TABLE[1]`（顶层）、`TABLE[1] row3 col0 内嵌表[0]`（嵌在哪一格）。
+    """
+    out = []
+    for i, tbl in enumerate(root.findall(qn('w:tbl'))):
+        label = 'TABLE[%d]' % i if not prefix else '%s 内嵌表[%d]' % (prefix, i)
+        out.append((label, tbl))
+        for ri, tr in enumerate(tbl.findall(qn('w:tr'))):
+            for ci, tc in enumerate(_row_cells(tr)):
+                out.extend(iter_tables(tc, '%s row%d col%d' % (label, ri, ci)))
+    return out
+
+
+def all_tables(doc):
+    """文档里**所有**表格元素（含内嵌），按出现顺序。"""
+    return [el for _, el in iter_tables(doc.element.body)]
+
+
+def nested_tables(doc):
+    """只挑出**内嵌**表格（不在顶层的那批）：`[(标签, 元素), ...]`。
+
+    它们是模板里的题目表格/信息表/评分表，任何情况下都不要搬动或清空。
+    """
+    return [(lab, el) for lab, el in iter_tables(doc.element.body)
+            if '内嵌表' in lab]
 
 
 def find_frame(doc, min_rows=2):
@@ -302,8 +356,9 @@ def plan(doc, empty_threshold=10, max_candidates=8):
     tbls = tables(doc)
     shape = None
     cands = []          # (说明, 代码)
-    cover = []          # 封面字段（要写也行，但请显式指定）
+    cover = cover_fields(doc)   # 封面/表头字段（结构化）
     skipped = []        # 评分区
+    nested = nested_tables(doc)
 
     for ti, el in enumerate(tbls):
         trs = el.findall(qn('w:tr'))
@@ -316,8 +371,7 @@ def plan(doc, empty_threshold=10, max_candidates=8):
                 continue                            # 评分区一律不建议
             cells = _row_cells(tr)
             if _is_cover_row(cells):
-                cover.append('TABLE[%d] row%d 「%s」' % (ti, ri, _tc_text(cells[0])[:14]))
-                continue
+                continue        # 封面行不进正文候选，单独在下面列（cover_fields）
             if _is_rubric_label(cells):
                 continue
             if not _writable(_tc_text(cells[0]), 0) and cols != {1} and len(cells) > 1:
@@ -372,8 +426,7 @@ def plan(doc, empty_threshold=10, max_candidates=8):
                     or any(h in txt for h in PLACEHOLDER_HINTS)):
                 continue
             if any(h in _norm(txt) for h in COVER_HINTS):
-                cover.append('段落「%s」' % txt)
-                continue
+                continue        # 段落式封面字段同上，cover_fields 里已收录
             cands.append(('段落锚点「%s」' % txt, "Target.after('%s')" % txt))
         if cands:
             shape = '④ 纯段落结构'
@@ -391,7 +444,26 @@ def plan(doc, empty_threshold=10, max_candidates=8):
     L.append('')
 
     if cover:
-        L.append('另有封面字段（要填请显式指定，不算正文区）：%s' % '、'.join(cover[:5]))
+        pending = [f for f in cover if not f['value']]
+        L.append('封面/表头字段：共 %d 个，其中 %d 个还空着（**问用户**，别猜）：'
+                 % (len(cover), len(pending)))
+        for f in cover[:10]:
+            L.append('    [%s] %-12s 值「%s」  %s' % (
+                '待填' if not f['value'] else '已填',
+                f['label'], f['value'][:18], f['where']))
+        if len(cover) > 10:
+            L.append('    ...（共 %d 个）' % len(cover))
+        L.append('    → 填用 K.fill_cover(doc, {...})：只改值，不动标签、不清空、不删框。')
+        L.append('      空着的字段若用户选择手填，就**一个字都别动封面**。')
+        L.append('')
+    if nested:
+        L.append('[!] 模板里有 %d 张**内嵌表格**（多半是题目表/信息表/评分表）：' % len(nested))
+        for lab, el in nested[:4]:
+            L.append('    %s  %d行  「%s」' % (
+                lab, len(el.findall(qn('w:tr'))), _tbl_first_text(el)[:20]))
+        L.append('    → 它们已被纳入结构指纹，被改动会在 finish() 里报出来。')
+        L.append('      往它们所在的格子写内容：Target.after("锚点") 或 Cursor(..., clear=False)，')
+        L.append('      **不要用 Target.cell() 清空整格**——清空会把格内原有的表格顶到最前。')
         L.append('')
     if skipped:
         L.append('[!] 已排除评分区：%s' % '、'.join(skipped))
@@ -429,9 +501,11 @@ def survey(doc, max_rows=16):
     """
     L = []
     paras = [e for e in doc.element.body.iterchildren() if e.tag == qn('w:p')]
-    L.append('文档勘察：%d 个顶层段落、%d 张顶层表格' % (len(paras), len(tables(doc))))
+    allt = iter_tables(doc.element.body)
+    L.append('文档勘察：%d 个顶层段落、%d 张顶层表格、%d 张内嵌表格' % (
+        len(paras), len(tables(doc)), len(allt) - len(tables(doc))))
     L.append('')
-    for ti, el in enumerate(tables(doc)):
+    for label, el in allt:
         trs = el.findall(qn('w:tr'))
         cols = _effective_cols(el)
         ncol = max(cols) if len(cols) == 1 else '/'.join(str(c) for c in sorted(cols))
@@ -440,8 +514,10 @@ def survey(doc, max_rows=16):
             marks.append('[!] 疑似评分表 —— 不要往这里写正文')
         if cols == {1}:
             marks.append('单列长表（可被 find_frame 自动识别）')
-        L.append('TABLE[%d]  %d行 × %s列  %s  %s' % (
-            ti, len(trs), ncol,
+        if '内嵌表' in label:
+            marks.append('[!] 内嵌表格（题目表/信息表）—— 不要清空它所在的格子')
+        L.append('%s  %d行 × %s列  %s  %s' % (
+            label, len(trs), ncol,
             '带边框' if _is_bordered(el) else '无边框',
             '  '.join(marks)))
         for ri, tr in enumerate(trs[:max_rows]):
@@ -548,7 +624,8 @@ def find_paragraph(doc, needle, occurrence=1):
 def check_target(doc, target):
     """写入前的安全检查，返回问题清单。**非空就必须停下来向用户确认。**
 
-    拦的是两类真正的危险：往评分表里写、往模板已有内容里写。
+    拦的是四类真正的危险：往评分表里写、往封面/表头字段里写（含把正文挂在
+    封面字段后面的 `Target.after()`）、清空内嵌着表格的格子、往模板已有内容里写。
     """
     problems = []
     if target.mode == 'cell':
@@ -572,13 +649,18 @@ def check_target(doc, target):
             problems.append(
                 'TABLE[%d] row%d 位于【评分区】（从 row%d 起）——'
                 '评分点、赋分表、教师评语一律不许改，连空白也不行。' % (ti, ri, rs))
-        # 封面行：只允许往右侧的**空白值格**里写；往标签格（col0）或
-        # 合并成一格的行里写，会覆盖/重排封面原有文字与空白，直接拦下。
-        if _is_cover_row(cells) and (ci == 0 or len(cells) == 1):
+        if _is_cover_row(cells) or _is_cover_row([cells[ci]]):
             problems.append(
-                'TABLE[%d] row%d 是【封面字段行】（「%s」）——'
-                '封面原有文字、空格和换行都不能动。只填写右侧空白栏目，'
-                '不要改标签格。' % (ti, ri, _tc_text(cells[0])[:16]))
+                'TABLE[%d] row%d 是【封面/表头信息行】（姓名、学号、题目…）。'
+                'put() 会先清空这一格，把「姓　名：」这样的标签连同下划线一起删掉。'
+                '封面字段请改用 K.fill_cover() / K.fill_field()。' % (ti, ri))
+        inner = cells[ci].findall(qn('w:tbl'))
+        if inner:
+            problems.append(
+                '目标格 TABLE[%d] row%d col%d 里**内嵌了 %d 张表格**（题目表/信息表最常见）。'
+                'put() 会先清空整格：表格上方的段落会消失、表格被顶到格子最前面。'
+                '改用 Target.after("表格附近的锚点文字")，或 Cursor(..., clear=False) 追加。'
+                % (ti, ri, ci, len(inner)))
         used = len(_tc_text(cells[ci]))
         if used > 60:
             problems.append(
@@ -593,27 +675,26 @@ def check_target(doc, target):
         if loc is not None:
             ti, ri, _ = loc
             el = tables(doc)[ti]
-            cells = _row_cells(el.findall(qn('w:tr'))[ri])
             rs = _rubric_start(el)
             if row_looks_like_rubric(el, ri) or (rs is not None and ri >= rs):
                 problems.append(
                     '锚点段落位于 TABLE[%d] row%d 的【评分区】——'
                     '不能在评分表内部插入内容。' % (ti, ri))
-            if _is_cover_row(cells):
-                problems.append(
-                    '锚点段落位于 TABLE[%d] row%d 的【封面字段行】——'
-                    '封面区域不允许插入内容。' % (ti, ri))
         else:
             txt = _norm(p.text)
-            if (len(txt) <= 30
-                    and any(_norm(h) in txt for h in COVER_HINTS)):
-                problems.append(
-                    '锚点段落「%s」疑似【封面字段】——不要在封面区域插入内容。'
-                    % p.text.strip()[:20])
             if sum(1 for h in RUBRIC_HINTS if _norm(h) in txt) >= 2:
                 problems.append(
                     '锚点段落「%s」疑似【评分/评价文字】——不要在评分区插入内容。'
                     % p.text.strip()[:20])
+        # 封面/表头字段：锚点长在这些字段上时，往后插正文会把正文挤进封面。
+        tc = _ancestor_tc(p._p)
+        hit = _label_value(p.text)[0] or (
+            _bare_label(_tc_text(tc)) if tc is not None else None)
+        if hit:
+            problems.append(
+                '锚点段落「%s」落在【封面/表头字段】「%s」上——在它后面插正文会'
+                '挤进封面。填封面字段请用 K.fill_cover()；正文换一个锚点。'
+                % (target.kw['anchor'], hit))
     elif target.mode == 'end':
         blocks = [e for e in doc.element.body.iterchildren()
                   if e.tag in (qn('w:p'), qn('w:tbl'))]
@@ -632,43 +713,59 @@ def _table_profile(el):
 
 
 def snapshot(doc):
-    """表格结构指纹。破坏模板最典型的表现就是表格被改动，所以盯住表格。
+    """表格结构指纹，**含内嵌表格**。破坏模板最典型的表现就是表格被改动，
+    所以盯住表格（外框、题目表、信息表、评分表全在里面）。
 
-    返回 `[(元素, 指纹), ...]` —— 带上元素本身，才能分辨"是不是同一张表"。
+    返回 `[(元素, 标签, 指纹), ...]` —— 带上元素本身，才能分辨"是不是同一张表"；
     只按序号比对会误判：往正文中间插一张表，后面所有表的序号都会错位。
+    标签形如 `TABLE[1] row3 col0 内嵌表[0]`，一眼看出动的是哪一张。
     """
-    return [(el, _table_profile(el)) for el in tables(doc)]
+    return [(el, label, _table_profile(el))
+            for label, el in iter_tables(doc.element.body)]
 
 
-def diff_snapshot(before, after):
+def _entry(e):
+    """兼容 `(元素, 指纹)` 与 `(元素, 标签, 指纹)` 两种形态。"""
+    return (e[0], None, e[1]) if len(e) == 2 else (e[0], e[1], e[2])
+
+
+def diff_snapshot(before, after, texts=True):
     """比对写入前后的表格结构，返回**问题清单**（空 = 模板没被破坏）。
 
     只报告**原本就存在**的表格发生的变化。写入过程中新增的表格不算问题 ——
     那正是要做的操作（插入题注表、附录表等）。
+
+    texts=False 时只比结构（行数/边框/表格增删），不比字数 ——
+    专给"填封面字段"这种**预期会改字数**的操作当闸门用（见 `fill_cover`）。
     """
-    before_prof = {id(el): p for el, p in before}
+    before_l = [_entry(e) for e in before]
+    after_l = [_entry(e) for e in after]
+    before_prof = {id(el): (label, prof) for el, label, prof in before_l}
+    labels = {id(el): (label or 'TABLE[#%d]' % i)
+              for i, (el, label, _) in enumerate(before_l)}
     problems = []
     seen = set()
-    for el, prof in after:
+    for el, label, prof in after_l:
         key = id(el)
         if key not in before_prof:
             continue                                  # 新插入的表，正常
         seen.add(key)
-        idx = [id(e) for e, _ in before].index(key)
-        b = before_prof[key]
+        name = labels.get(key) or label or '原有表格'
+        b = before_prof[key][1]
         if b[2] != prof[2]:
-            problems.append('原有表格 #%d 的边框设置被改了' % idx)
+            problems.append('%s 的边框设置被改了' % name)
         if b[0] != prof[0]:
-            problems.append('原有表格 #%d 行数变了：%d → %d' % (idx, b[0], prof[0]))
+            problems.append('%s 行数变了：%d → %d' % (name, b[0], prof[0]))
             continue
-        if b[1] != prof[1]:
+        if texts and b[1] != prof[1]:
             for ri, (br, ar) in enumerate(zip(b[1], prof[1])):
                 if br != ar:
-                    problems.append('原有表格 #%d row%d 各格字数 %s → %s' % (
-                        idx, ri, list(br), list(ar)))
+                    problems.append('%s row%d 各格字数 %s → %s' % (
+                        name, ri, list(br), list(ar)))
     gone = set(before_prof) - seen
     if gone:
-        problems.append('有 %d 张原有表格不见了（被删除或替换）' % len(gone))
+        problems.append('有 %d 张原有表格不见了（被删除或替换）：%s' % (
+            len(gone), '、'.join(labels.get(k, '?') for k in list(gone)[:3])))
     return problems
 
 
@@ -818,6 +915,11 @@ def diff_protected(before, after):
     return problems
 
 
+def diff_structure(before, after):
+    """只比结构，不比字数 —— 填封面字段时用它验收。"""
+    return diff_snapshot(before, after, texts=False)
+
+
 class Cursor:
     """按显式目标往模板里落内容，并在收尾时验证模板没被破坏。
 
@@ -834,8 +936,13 @@ class Cursor:
        逼你说清楚为什么确认这个目标是对的。
     2. 清空目标格**延迟到首次写入之后**才做。构造 Cursor 不改动文档，
        所以检查不过、你放弃写入时，模板还是原封不动的。
-    3. `finish()` 比对结构指纹 + **保护区 XML 哈希**，报告除目标格以外的任何
-       变化——包括封面/评分表/模板原有段落里改动的一个空格或一个换行。
+    3. `finish()` 比对结构指纹（含内嵌表格）**＋ 保护区 XML 哈希**，报告除
+       目标格以外的任何变化——包括封面/评分表/模板原有段落里改动的一个空格
+       或一个换行。
+
+    **目标格里已经有东西时用 `clear=False`**（追加，不清空）——尤其是格子内
+    嵌着题目表/信息表的时候。清空会把表格上方的段落删掉、把表格顶到最前面，
+    结构指纹里的行数和字数都会对不上。
     """
 
     def __init__(self, doc, target, keep_paras=0, clear=True, force=None):
@@ -929,11 +1036,17 @@ class Cursor:
     def finish(self):
         """收尾并返回模板保护报告（列表。空 = 没动到模板其它地方）。
 
-        两道检查一起报：表格结构指纹（字数级）+ 保护区 XML 哈希（字节级，
-        能抓到空白、换行、字体和结构改动）。
+        两道检查一起报：表格结构指纹（含内嵌表格，字数级）+ 保护区 XML 哈希
+        （字节级，能抓到空白、换行、字体和结构改动）。
         """
-        if self.target.mode == 'cell' and self._cell_tc is not None:
+        if self._cell_tc is not None:
             finish_cell(_CellProxy(self._cell_tc))
+        elif self._anchor_el is not None:
+            # 锚点在某个单元格里（往内嵌表格附近的段落后面插）时，同一个规则
+            # 也要守：格子里最后一块不能是表格，否则 Word 报"文件内容已经损坏"。
+            tc = _ancestor_tc(self._anchor_el)
+            if tc is not None:
+                finish_cell(_CellProxy(tc))
         problems = diff_snapshot(self.before, snapshot(self.doc))
         problems += diff_protected(self._protected, protected_snapshot(self.doc, self._skip))
         return problems
@@ -946,11 +1059,350 @@ class _CellProxy:
         self._tc = tc
 
 
+def _ancestor_tc(el):
+    """往上找到最近的 `w:tc`（元素不在表格里就返回 None）。"""
+    p = el.getparent()
+    while p is not None:
+        if p.tag == qn('w:tc'):
+            return p
+        p = p.getparent()
+    return None
+
+
 def clear_cell_tc(tc, keep=0):
-    """按 tc 元素清段落（clear_cell 的底层版本）。"""
+    """按 tc 元素清段落（clear_cell 的底层版本）。
+
+    ⚠️ 只删段落，**不删表格**——所以格子里若原本有内嵌表格（题目表/信息表），
+    清空之后它会被顶到格子最前面，上面原本的段落全没了。别对含内嵌表格的格子
+    调这个（`check_target()` 会拦）；改用 `Target.after("锚点")` 插到表格后面。
+    """
     ps = tc.findall(qn('w:p'))
     for p in ps[keep:]:
         tc.remove(p)
+
+
+# --------------------------------------------------------------------------
+# 封面 / 表头字段：只填值，不动标签
+#
+# 封面——以及题目表、学生信息表里那些「姓　名：____」「题　目」——**不是正文编写区**。
+# 拿 Cursor/Target.cell 去写它，等于先清空整格：标签、下划线、校徽、表格边框一起没。
+# 所以另起一套：
+#   ① cover_fields()  只勘察：哪个字段、现在是什么值、值该落在哪
+#   ② 缺哪些值 **问用户**（或让用户自己手填），姓名/学号/日期绝不猜
+#   ③ fill_cover()/fill_field()  填值——复用模板自己留的空白 run，其余一字不动
+# --------------------------------------------------------------------------
+
+_BLANKS = '_＿ \t　'
+
+
+def _as_p(p):
+    """段落：既能收 `docx.text.paragraph.Paragraph`，也能收 `<w:p>` 元素。"""
+    return getattr(p, '_p', p)
+
+
+def _p_text(p):
+    return ''.join(t.text or '' for t in _as_p(p).iter(qn('w:t')))
+
+
+def _tbl_first_text(tbl):
+    trs = tbl.findall(qn('w:tr'))
+    return _tc_text(_row_cells(trs[0])[0]) if trs else ''
+
+
+def _label_value(text):
+    """把「题　目：____」拆成 `('题目', '')`；不是「标签：值」就返回 `(None, None)`。
+
+    标签要先去掉全角空格再认，因为模板爱写成「姓　名」「班　　级」。
+    值里的下划线/空格也一并去掉——那只是给手写留的空白，不是已填的值。
+    """
+    s = (text or '').strip()
+    m = re.match(r'^([^：:\n]{1,12})[：:][\s　]*([\s\S]*)$', s)
+    if not m:
+        return None, None
+    label = _norm(m.group(1))
+    if not label or not any(h in label for h in COVER_HINTS):
+        return None, None
+    return label, m.group(2).strip(_BLANKS)
+
+
+def _cell_value(tc):
+    """右邻格里的值。**只有下划线/空格的算"还没填"**——模板常写成
+    `| 题　目： | ＿＿＿＿＿ |`，那串下划线是留给手写的空白，不是已填的内容。"""
+    t = _tc_text(tc)
+    return '' if t.strip(_BLANKS) == '' else t
+
+
+def _bare_label(text):
+    """整格就是一个标签、**没有冒号**的写法（题目表最常见：`| 题　目 | 值 |`）。"""
+    s = _norm(text)
+    if 0 < len(s) <= 8 and any(h in s for h in COVER_HINTS):
+        return s
+    return None
+
+
+def _run_text(r):
+    return ''.join(t.text or '' for t in r.findall(qn('w:t')))
+
+
+def _is_blank_run(r):
+    """这个 run 是不是"留给填的空白"：没文字、纯空格、或一串下划线。"""
+    return _run_text(r).strip(_BLANKS) == ''
+
+
+def _set_run_text(r, text):
+    """只改这个 run 的文字，**格式一律不动**（下划线、字体全靠它保留）。"""
+    ts = r.findall(qn('w:t'))
+    for extra in ts[1:]:
+        r.remove(extra)
+    if ts:
+        t = ts[0]
+    else:
+        t = OxmlElement('w:t')
+        r.append(t)
+    t.set(qn('xml:space'), 'preserve')
+    t.text = text
+    return r
+
+
+_AFTER_U = ('w:effect', 'w:bdr', 'w:shd', 'w:fitText', 'w:vertAlign', 'w:rtl',
+            'w:cs', 'w:em', 'w:lang', 'w:eastAsianLayout', 'w:specVanish',
+            'w:oMath')
+
+
+def _ensure_underline(r):
+    """给这个 run 加下划线。`w:u` 的位置有讲究（在 sz 之后、vertAlign 之前），
+    插错位置 Word 会报"文件内容已经损坏"。"""
+    rPr = r.find(qn('w:rPr'))
+    if rPr is None:
+        rPr = OxmlElement('w:rPr')
+        r.insert(0, rPr)
+    u = rPr.find(qn('w:u'))
+    if u is None:
+        u = E('w:u', val='single')
+        for child in rPr:
+            if child.tag in [qn(x) for x in _AFTER_U]:
+                child.addprevious(u)
+                break
+        else:
+            rPr.append(u)
+    else:
+        u.set(qn('w:val'), 'single')
+    return r
+
+
+def _strip_underline(r):
+    rPr = r.find(qn('w:rPr'))
+    if rPr is not None:
+        for u in rPr.findall(qn('w:u')):
+            rPr.remove(u)
+    return r
+
+
+def _split_run_at(r, cut):
+    """把 run 的文字从第 cut 个字符切开，后半段独立成一个 run（格式照抄）。
+    用来把「姓　名：张三」里的值部分单独拎出来。"""
+    t = _run_text(r)
+    _set_run_text(r, t[:cut])
+    new = OxmlElement('w:r')
+    src = r.find(qn('w:rPr'))
+    if src is not None:
+        new.append(copy.deepcopy(src))
+    _set_run_text(new, t[cut:])
+    r.addnext(new)
+    return new
+
+
+def _label_end(p, label):
+    """段落文字里「标签：」结束的位置（字符下标）。找不到返回 None。"""
+    m = re.match(r'^[\s　]*([^：:\n]{1,12})[：:]', _p_text(p))
+    if not m:
+        return None
+    if label and _norm(label) not in _norm(m.group(1)) \
+            and _norm(m.group(1)) not in _norm(label):
+        return None
+    return m.end()
+
+
+def _tail_runs(p, label=None):
+    """标签之后的那些 run —— 值该落的地方。给了 label 就只取标签后面的，
+    这样**绝不会误伤标签本身**（「姓」「　」「名」「：」各占一个 run 也不怕）。"""
+    p = _as_p(p)
+    runs = p.findall(qn('w:r'))
+    if not label:
+        return runs
+    cut = _label_end(p, label)
+    if cut is None:
+        return []
+    pos = 0
+    for i, r in enumerate(runs):
+        n = len(_run_text(r))
+        if pos + n > cut:
+            return [_split_run_at(r, cut - pos)] + runs[i + 1:]
+        pos += n
+    return []
+
+
+def _value_prop(src):
+    """把标签 run 的格式给值用：字体字号照抄，**去掉加粗**（标签常加粗，值一般不加）。"""
+    if src is None:
+        return None
+    prop = copy.deepcopy(src)
+    for tag in ('w:b', 'w:bCs', 'w:i', 'w:iCs'):
+        for el in prop.findall(qn(tag)):
+            prop.remove(el)
+    return prop
+
+
+def _label_prop(para):
+    runs = _as_p(para).findall(qn('w:r'))
+    return _value_prop(runs[-1].find(qn('w:rPr'))) if runs else None
+
+
+def _field(label, value, where, kind, para, prop):
+    return {'label': label, 'value': value, 'where': where,
+            'kind': kind, 'para': para, 'prop': prop}
+
+
+def cover_fields(doc, limit=40):
+    """勘察封面/表头里的字段，**只报告、不改动**。
+
+    返回 `[{'label', 'value', 'where', 'kind', 'para', 'prop'}, ...]`：
+
+    | kind | 什么情况 | 值落在哪 |
+    | --- | --- | --- |
+    | `inline` | 标签和值在同一段（`姓　名：____`） | 标签段本身 |
+    | `next_para` | 标签独占一段，值留在下一段 | 下一个空白段落 |
+    | `next_cell` | 标签独占一格，值是右邻格（题目表常见） | 右邻格首个段落 |
+    | `manual` | 找不到可靠的落点 | 不动，交人工处理 |
+
+    `value` 为空 = 这个字段还空着。**空着的要问用户**，别猜姓名/学号/日期。
+    填值用 `fill_cover()`，不要用 `put()`。
+    """
+    out = []
+    for tlabel, tbl in iter_tables(doc.element.body):
+        for ri, tr in enumerate(tbl.findall(qn('w:tr'))):
+            cells = _row_cells(tr)
+            for ci, tc in enumerate(cells):
+                ps = tc.findall(qn('w:p'))
+                if not ps:
+                    continue
+                where = '%s row%d col%d' % (tlabel, ri, ci)
+                lab = lab_para = None
+                for q in ps:
+                    l, v = _label_value(_p_text(q))
+                    if l:
+                        lab, lab_para = l, q
+                        break
+                if lab is None:
+                    # 「题目」这种没有冒号、值在右邻格的写法
+                    bare = _bare_label(_tc_text(tc))
+                    if bare is None:
+                        continue
+                    nxt = cells[ci + 1] if ci + 1 < len(cells) else None
+                    nps = nxt.findall(qn('w:p')) if nxt is not None else []
+                    if not nps:
+                        out.append(_field(bare, _cell_value(nxt) if nxt is not None
+                                          else '', where, 'manual', None, None))
+                        continue
+                    out.append(_field(bare, _cell_value(nxt), where + ' →下一格',
+                                      'next_cell', nps[0], _label_prop(ps[0])))
+                    continue
+
+                val = _label_value(_p_text(lab_para))[1]
+                tail = _tail_runs(lab_para, lab)
+                has_slot = any(_is_blank_run(r) for r in tail)
+                nxt = cells[ci + 1] if ci + 1 < len(cells) else None
+                nps = nxt.findall(qn('w:p')) if nxt is not None else []
+                blank_para = next((q for q in ps[ps.index(lab_para) + 1:]
+                                   if _p_text(q).strip() == ''), None)
+
+                if val:
+                    out.append(_field(lab, val, where, 'inline', lab_para, None))
+                elif has_slot:
+                    out.append(_field(lab, '', where + '（下划线处）', 'inline',
+                                      lab_para, None))
+                elif nxt is not None and nps:
+                    # 值在右邻格：可能是已填的，也可能只留了一串下划线
+                    out.append(_field(lab, _cell_value(nxt), where + ' →下一格',
+                                      'next_cell', nps[0], _label_prop(lab_para)))
+                elif blank_para is not None:
+                    out.append(_field(lab, '', where + '（下一段）', 'next_para',
+                                      blank_para, _label_prop(lab_para)))
+                else:
+                    out.append(_field(lab, '', where + '（标签后）', 'inline',
+                                      lab_para, _label_prop(lab_para)))
+
+    # 段落式封面：正文顶层、没有表格兜着的那种
+    for pi, el in enumerate(doc.element.body.findall(qn('w:p'))):
+        lab, val = _label_value(_p_text(el))
+        if lab:
+            out.append(_field(lab, val, '段落%d' % pi, 'inline', el,
+                              _label_prop(el)))
+    return out[:limit]
+
+
+def fill_field(p, text, label=None, underline=None, prop=None):
+    """往「标签：____」这个位置填值。**不清空、不删标签、不动版式。**
+
+    优先级：① 标签后本来就有空白填充（下划线/空格）→ 只改它的文字，格式原样保留；
+    ② 标签后已有内容 → 替换那一部分，标签一字不动；③ 标签后什么都没有 → 追加一个
+    run，字体字号照抄标签（去掉加粗）。
+
+    `underline=True` 才强制打下划线；`None`（默认）= 模板什么样就什么样。
+    `p` 收 `Paragraph` 也行，收 `<w:p>` 元素也行。
+    """
+    p = _as_p(p)
+    tail = _tail_runs(p, label)
+    if tail:
+        slot = tail[0]
+        _set_run_text(slot, text)
+        for r in tail[1:]:
+            _set_run_text(r, '')
+    else:
+        if prop is None:
+            runs = p.findall(qn('w:r'))
+            if runs:
+                prop = _value_prop(runs[-1].find(qn('w:rPr')))
+        slot = run(text, prop)
+        p.append(slot)
+    if underline:
+        _ensure_underline(slot)
+    elif underline is False:
+        _strip_underline(slot)
+    return slot
+
+
+def fill_cover(doc, values, underline=None, limit=40):
+    """按标签把值填进封面/表头字段。**只改值，不动标签、不清空、不删框。**
+
+        before = K.snapshot(doc)
+        filled, missed, manual = K.fill_cover(doc, {'姓名': '张三'})
+        print(K.diff_structure(before, K.snapshot(doc)))   # 必须为空
+
+    同一标签出现多次就都填（封面一份、题目表一份很常见）。
+    返回 `(已填, 没找到的标签, 需人工处理的字段)`。
+    """
+    fields = cover_fields(doc, limit=limit)
+    filled, missed, manual = [], [], []
+    for key, val in values.items():
+        k = _norm(str(key))
+        if not k:
+            continue
+        hits = [f for f in fields
+                if f['label'] == k or k in f['label'] or f['label'] in k]
+        if not hits:
+            missed.append(key)
+            continue
+        for f in hits:
+            if f['kind'] == 'manual' or f['para'] is None:
+                manual.append('%s（%s）' % (f['label'], f['where']))
+                continue
+            fill_field(f['para'], str(val),
+                       label=f['label'] if f['kind'] == 'inline' else None,
+                       underline=underline, prop=f['prop'])
+            filled.append('%s：%s  [%s %s]' % (f['label'], val, f['where'],
+                                               f['kind']))
+    return filled, missed, manual
 
 
 # --------------------------------------------------------------------------
