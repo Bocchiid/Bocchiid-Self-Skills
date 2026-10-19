@@ -114,6 +114,21 @@
         }
       }
     },
+    "conflicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "requirement", "decision"],
+        "properties": {
+          "id": {"type": "string"},
+          "requirement": {"type": "string"},
+          "template_slot": {"type": "string"},
+          "decision": {"enum": ["skip", "keep", "pending"]},
+          "reason": {"type": "string"},
+          "location": {"type": "string"}
+        }
+      }
+    },
     "report_map": {
       "type": "array",
       "items": {

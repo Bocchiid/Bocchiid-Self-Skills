@@ -201,6 +201,37 @@ def test_skills() -> None:
               all(Path(p).is_absolute() for p in result["skills"].values() if p))
 
 
+def test_analyze_gate() -> None:
+    print("[analyze gate]")
+    with tempfile.TemporaryDirectory() as td:
+        ws = Path(td)
+        worker_mod.create_dirs(ws)
+        state = worker_mod.default_state(ws, "assist", "local", "", "gate")
+        r = verify.analyze_gate(ws, state)
+        check("gate fails without materials/decisions", not r["ok"], str(r))
+        (ws / "材料清单.md").write_text(
+            "# 材料清单\n\n## 已有\n- 指导书\n\n## 还缺\n- 评分表\n\n## 用户确认\n- 没有评分表\n",
+            encoding="utf-8")
+        r = verify.analyze_gate(ws, state)
+        check("gate still fails without decisions", not r["ok"], str(r))
+        state["decisions"].append({"key": "materials", "value": "partial",
+                                    "note": "没有评分表"})
+        r = verify.analyze_gate(ws, state)
+        check("gate passes with materials + decisions", r["ok"], str(r))
+        plan = sample_plan()
+        plan["conflicts"] = [{"id": "C1", "requirement": "参考文献",
+                              "decision": "pending"}]
+        (ws / "_worker" / "plan.json").write_text(
+            json.dumps(plan, ensure_ascii=False), encoding="utf-8")
+        r = verify.analyze_gate(ws, state)
+        check("pending conflict blocks gate", not r["ok"], str(r))
+        plan["conflicts"][0]["decision"] = "skip"
+        (ws / "_worker" / "plan.json").write_text(
+            json.dumps(plan, ensure_ascii=False), encoding="utf-8")
+        r = verify.analyze_gate(ws, state)
+        check("skip conflict passes gate", r["ok"], str(r))
+
+
 def test_plan() -> None:
     print("[plan]")
     ok = verify.validate_plan(sample_plan())
@@ -217,6 +248,12 @@ def test_plan() -> None:
     bad = sample_plan()
     bad["steps"][0]["acceptance"] = []
     check("no acceptance fails", not verify.validate_plan(bad)["ok"])
+    bad = sample_plan()
+    bad["conflicts"] = [{"id": "C1", "requirement": "参考文献",
+                         "decision": "pending"}]
+    check("pending conflict fails plan", not verify.validate_plan(bad)["ok"])
+    bad["conflicts"][0]["decision"] = "skip"
+    check("skip conflict passes plan", verify.validate_plan(bad)["ok"])
 
 
 def test_state() -> None:
@@ -237,6 +274,11 @@ def test_state() -> None:
         plan = sample_plan()
         (ws / "_worker" / "plan.json").write_text(
             json.dumps(plan, ensure_ascii=False), encoding="utf-8")
+        (ws / "材料清单.md").write_text(
+            "# 材料清单\n\n## 已有\n- 材料\n\n## 还缺\n- 无\n\n## 用户确认\n- 用户确认：没有缺项\n",
+            encoding="utf-8")
+        state["decisions"].append({"key": "materials", "value": "complete",
+                                    "note": "用户确认没有缺项"})
         state["plan"]["frozen"] = True
         worker_mod.advance(state, "PLAN")
         worker_mod.advance(state, "PLAN_FREEZE")
@@ -386,6 +428,7 @@ def main() -> int:
     test_skills()
     test_durability()
     test_action_durability()
+    test_analyze_gate()
     test_plan()
     test_state()
     test_step()

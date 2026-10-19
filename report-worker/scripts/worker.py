@@ -129,6 +129,7 @@ def default_state(workspace: Path, autonomy: str, env_type: str,
         "autonomy": autonomy,
         "environment": {"type": env_type, "target": target},
         "agent_window": "",
+        "decisions": [],
         "task": {"name": task_name, "materials": [], "template": "", "report": ""},
         "plan": {"path": "_worker/plan.json", "version": "", "frozen": False, "gate": None},
         "execution": {"stage": "", "step": "", "attempts": {},
@@ -200,8 +201,10 @@ def next_action(workspace: Path, state: dict) -> dict:
         base.update({
             "title": "分析：盘点材料、列缺口",
             "do": "先看用户已给什么，再列缺口和待确认问题；一次问完，不要先做实验。",
-            "expected": ["材料清单.md"],
+            "expected": ["材料清单.md", "_worker/decisions.json"],
             "skills_missing": missing,
+            "gate": "python worker.py gate --name analyze",
+            "decide": "python worker.py decide --key materials --value complete/no --note ...",
             "then": "python worker.py advance --to COLLECT 或 PLAN",
         })
         if missing:
@@ -209,15 +212,17 @@ def next_action(workspace: Path, state: dict) -> dict:
     elif phase == "COLLECT":
         base.update({
             "title": "收集：等用户补材料/数据",
-            "do": "把用户补的材料放进任务目录，更新材料清单；用户说没有就记录假设，不追问。",
-            "expected": ["材料清单.md"],
+            "do": "把用户补的材料放进任务目录，更新材料清单；用户说没有就用 decide 记录，不追问。",
+            "expected": ["材料清单.md", "_worker/decisions.json"],
+            "gate": "python worker.py gate --name analyze",
             "then": "python worker.py advance --to ORGANIZE",
         })
     elif phase == "ORGANIZE":
         base.update({
             "title": "整理：证据、数据、来源",
             "do": "按证据 ID 整理 Data/；每个目的至少一条证据；截图只规划核心区域。",
-            "expected": ["Data/证据计划.md", "材料清单.md"],
+            "expected": ["Data/证据计划.md", "材料清单.md", "_worker/decisions.json"],
+            "gate": "python worker.py gate --name analyze",
             "then": "python worker.py advance --to PLAN",
         })
     elif phase == "PLAN":
@@ -291,6 +296,15 @@ def advance(state: dict, to_phase: str) -> None:
         raise SystemExit(f"unknown phase: {to_phase}")
     if to_phase == "EXECUTE" and not state.get("plan", {}).get("frozen"):
         raise SystemExit("plan is not frozen; run freeze --confirm first")
+    if to_phase == "PLAN" and current in ("ANALYZE", "COLLECT", "ORGANIZE"):
+        try:
+            import verify as verify_mod
+            gate = verify_mod.analyze_gate(Path(state["workspace"]), state)
+        except Exception as exc:
+            raise SystemExit(f"analyze gate failed to run: {exc}")
+        if not gate.get("ok"):
+            raise SystemExit("analyze gate failed: " + "; ".join(gate.get("errors", [])) +
+                             " (run worker.py gate --name analyze; record decisions with decide)")
     if to_phase not in ALLOWED.get(current, set()):
         raise SystemExit(f"illegal transition: {current} -> {to_phase}")
     state["phase"] = to_phase
@@ -369,6 +383,7 @@ def cmd_status(args: argparse.Namespace) -> int:
         print(f"plan:      {state['plan']['path']} (frozen={state['plan']['frozen']})")
         print(f"step:      {state['execution'].get('step') or '-'}")
         print(f"completed: {len(state['execution'].get('completed', []))}")
+        print(f"decisions: {len(state.get('decisions', []))}")
         print(f"report:    round {state['report'].get('round', 1)}")
     return 0
 
@@ -512,11 +527,28 @@ def cmd_round(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_decide(args: argparse.Namespace) -> int:
+    workspace = Path(args.workspace).resolve()
+    state = load_state(workspace)
+    entry = {"at": now(), "key": args.key, "value": args.value,
+             "note": args.note or ""}
+    state.setdefault("decisions", []).append(entry)
+    log_event(state, "decision", **entry)
+    save_state(workspace, state)
+    _durable.atomic_write_json(workspace / "_worker" / "decisions.json",
+                               {"items": state["decisions"]}, backup=True)
+    print(json.dumps({"recorded": entry, "count": len(state["decisions"])},
+                     ensure_ascii=False, indent=2))
+    return 0
+
+
 def cmd_gate(args: argparse.Namespace) -> int:
     workspace = Path(args.workspace).resolve()
     state = load_state(workspace)
     import verify as verify_mod
-    if args.name == "plan":
+    if args.name == "analyze":
+        result = verify_mod.analyze_gate(workspace, state)
+    elif args.name == "plan":
         result = verify_mod.validate_plan(load_plan(workspace, state))
     elif args.name == "step":
         result_path = Path(args.file or "_worker/actions/last.json")
@@ -573,6 +605,7 @@ def doctor(workspace: Path, state: dict | None = None, recover: bool = False) ->
         issues.append(f"state recovered from backup: {source}")
         if recover:
             _durable.atomic_write_json(path, data, backup=False)
+    phase = str(data.get("phase", "")) if isinstance(data, dict) else ""
     for tmp in sorted((workspace / "_worker").glob("*.tmp")):
         issues.append(f"leftover temp file: {tmp.relative_to(workspace)}")
     for folder, patterns in ((workspace, ("*.tmp", "*.tmp.*", "~$*")),
@@ -586,6 +619,9 @@ def doctor(workspace: Path, state: dict | None = None, recover: bool = False) ->
     for intent in intents:
         issues.append(f"in-flight action {intent.get('id', '?')} "
                       f"step={intent.get('step', '?')} pid={intent.get('pid', '?')}")
+    decisions = data.get("decisions", []) if isinstance(data, dict) else []
+    if phase not in ("ANALYZE", "") and not decisions:
+        issues.append("no user decisions recorded; run worker.py decide before PLAN")
     completed = set(data.get("execution", {}).get("completed", [])) if isinstance(data, dict) else set()
     actions_path = workspace / "_worker" / "actions.jsonl"
     last_by_step: dict[str, dict] = {}
@@ -603,7 +639,6 @@ def doctor(workspace: Path, state: dict | None = None, recover: bool = False) ->
             hints.append(f"step {sid} has a passed action {row.get('id')} but is not completed")
     ev_path = workspace / "_worker" / "evidence.json"
     ev, ev_source, ev_error = _durable.read_json_with_backup(ev_path)
-    phase = str(data.get("phase", "")) if isinstance(data, dict) else ""
     if ev is None and (ev_path.exists() or phase in ("WRITE", "REVIEW", "REVISE", "DONE")):
         issues.append(f"evidence manifest unreadable: {ev_error}")
     elif ev is not None and ev_source != str(ev_path):
@@ -787,9 +822,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--next", action="store_true")
     p.set_defaults(func=cmd_round)
 
+    p = sub.add_parser("decide")
+    p.add_argument("--key", required=True)
+    p.add_argument("--value", required=True)
+    p.add_argument("--note", default="")
+    p.set_defaults(func=cmd_decide)
+
     p = sub.add_parser("gate")
     p.add_argument("--name", required=True,
-                   choices=["plan", "step", "evidence", "report", "review", "dod"])
+                   choices=["analyze", "plan", "step", "evidence", "report", "review", "dod"])
     p.add_argument("--step", default="")
     p.add_argument("--file", default="")
     p.set_defaults(func=cmd_gate)

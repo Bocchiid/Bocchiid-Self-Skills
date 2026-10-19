@@ -55,6 +55,9 @@ python scripts/env.py --install-plan
 python scripts/worker.py --workspace /path/to/task init --autonomy assist
 python scripts/worker.py --workspace /path/to/task next
 python scripts/worker.py --workspace /path/to/task doctor
+# 盘点材料后记录用户回答，再过 ANALYZE 闸门
+python scripts/worker.py --workspace /path/to/task decide --key materials --value no --note "..."
+python scripts/worker.py --workspace /path/to/task gate --name analyze
 ```
 
 对 Agent 说：
@@ -65,6 +68,8 @@ python scripts/worker.py --workspace /path/to/task doctor
 ## 交互约定
 
 - **先问材料**：指导书/模板/评分表/已有数据/成品参考/实际方案/交付格式；
+- 写 `材料清单.md`（已有/还缺/用户确认），用 `worker.py decide` 记录用户回答；
+  **没有清单+决策记录，不能进入 PLAN**；
 - 缺关键材料先说明影响；用户说没有就按没有规划，不反复追问；
 - **执行/截图前**：告诉用户“接下来请全程不要触碰键盘鼠标”，确认后再开始；
 - **做完后**：把 Agent 窗口置顶/提醒用户；

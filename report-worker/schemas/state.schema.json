@@ -17,6 +17,8 @@
                "WAITING_USER", "DONE", "BLOCKED"]
     },
     "previous_phase": {"type": ["string", "null"]},
+    "agent_window": {"type": "string"},
+    "decisions": {"type": "array", "items": {"type": "object"}},
     "autonomy": {"enum": ["observe", "assist", "auto", "full"]},
     "environment": {
       "type": "object",

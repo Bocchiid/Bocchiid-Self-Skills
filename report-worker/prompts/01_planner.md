@@ -60,6 +60,10 @@
   }],
   "evidence": [{"id": "E1", "step": "S1", "type": "screenshot|data|log|file|citation",
                 "level": "L1", "must_include": [], "filename": ""}],
+  "conflicts": [
+    {"id": "C1", "requirement": "评分表要求参考文献", "template_slot": "模板无参考文献区",
+     "decision": "skip", "reason": "模板问题；用户确认不保留", "location": ""}
+  ],
   "report_map": [{"section": "", "use": ["E1"]}],
   "writer_figures": []
 }
@@ -82,7 +86,9 @@
 1. 标为“模板-评分表冲突”；
 2. 问用户是否保留；**默认不保留**（模板问题）；
 3. 用户要求保留时，规划合理位置（文末/脚注/附录），不塞保护区；
-4. 在执行卡/计划里记录“保留/不保留 + 原因”，同步 writer/reviewer。
+4. 写进 `plan.json` 的 `conflicts` 数组：`decision` 只能是 `skip`/`keep`/`pending`；
+   `pending` 表示还没问用户，**不能冻结**；
+5. 同步 writer/reviewer：`skip` 不写、不扣分；`keep` 按约定位置写/审。
 
 ## 6. 输出 result.json
 
