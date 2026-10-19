@@ -4,19 +4,38 @@
 
 Word 不能把一张图或一个表格拆到两页。一个大块塞不进页尾剩下的空间时，整块会被挪到下一页，**上一页就留下一整块空白**——典型症状是某一页只用了 50%~70%，后面全是空白。
 
-目标：除了收尾那一两页，每页都排得比较满。
+目标：在**需要编写**的页面里，除了正文收尾的最后一页，每页都排得比较满。
+
+## 统计范围：只算我们需要编写的页
+
+**利用率只统计我们编写的页面**：实验步骤、实验结果分析、用例分析等。
+下面这些页不参与计算——它们不是我们排版的产物，页尾空着是模板本来的样子：
+
+- 封面页
+- 评分点 / 评分表 / 教师评语页
+- 模板自带的实验说明、格式说明页
+- 空白页
+
+`page_fill.py` 默认会自动跳过封面、评分/评价页和空白页；模板说明页这类无法可靠
+自动识别的，用 `--list` 看页码后 `--exclude` 显式排除，或者用 `--pages` 直接圈定
+自己写的那几页。
 
 ## 度量
 
 ```bash
 python scripts/word_com.ps1 -Action to-pdf -In out.docx -Out preview.pdf   # 先出 PDF
-python scripts/page_fill.py preview.pdf                                   # 再量
+
+python scripts/page_fill.py preview.pdf --list          # 先看每页分类与首行
+python scripts/page_fill.py preview.pdf                 # 自动排除封面/评分/空白页
+python scripts/page_fill.py preview.pdf --exclude 2,3   # 再排除模板说明页
+python scripts/page_fill.py preview.pdf --pages 4-9      # 或只统计自己写的页
 ```
 
-输出每页的利用率与底部空白（pt）。判读：
+输出每页的利用率与底部空白（pt），并列出被排除的页及原因。判读：
 
-- **末尾一两页天然不满**——正文就此结束，后面可能还有模板自带的评分表。这不是问题。
+- **参与统计的最后一页天然不满**——正文到此结束。这不是问题。
 - **中途某页低于 ~85%** 才是要处理的。
+- **不要统计封面/评分页/说明页**，也不要把它们的空白算进"正文段底部空白合计"。
 - 先量一版基线，再动手，否则分不清改动有没有效果。
 
 ## 定位阻塞块
@@ -29,6 +48,7 @@ python scripts/page_fill.py preview.pdf                                   # 再�
 
 ```bash
 # 打印指定页的纵向排布：每块的 y 范围、类型、高度
+# --json 里 selected_pages / skipped_pages 就是本次统计的范围，先确认口径
 python scripts/page_fill.py preview.pdf --json      # 先用它找出页码
 python -c "
 import pymupdf, io
@@ -115,13 +135,16 @@ IMG_W_BY_NAME = {'10 openflow_v1 packet.png': 395.0}   # 只缩这一张
 ## 收敛流程
 
 ```bash
-# 1. 量基线
-python scripts/page_fill.py preview.pdf
+# 1. 量基线（先 --list 确定页码范围，之后每轮都用同一口径）
+python scripts/page_fill.py preview.pdf --exclude 2,3
 # 2. 定位阻塞块，按上面的优先级处理，改 build.py
 # 3. 重建 → 出 PDF → 再量
-python scripts/page_fill.py preview2.pdf
-# 4. 重复，直到没有低于 85% 的中途页，或剩下的洞确实无法消除
+python scripts/page_fill.py preview2.pdf --exclude 2,3
+# 4. 重复，直到需编写页里没有低于 85% 的中途页，或剩下的洞确实无法消除
 ```
+
+**每轮保持同一统计口径**：`--exclude`/`--pages` 前后一致，否则"空白减少了"可能
+只是把模板页排除了，不是真的改好了。
 
 每轮改动都是一次真实的 Word 排版，单轮约 40 秒，一般 2~3 轮收敛。
 

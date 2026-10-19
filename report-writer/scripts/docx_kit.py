@@ -30,6 +30,7 @@ helper 把内容塞进模板的可编写区域。不要用 python-docx 重建文
 """
 
 import copy
+import hashlib
 import os
 import re
 
@@ -566,14 +567,60 @@ def check_target(doc, target):
             problems.append(
                 'TABLE[%d] row%d 疑似【评分/评价行】——这一带是打分用的，'
                 '往这里写正文会破坏模板。确认这真的是要填写的栏目吗？' % (ti, ri))
+        rs = _rubric_start(el)
+        if rs is not None and ri >= rs and not row_looks_like_rubric(el, ri):
+            problems.append(
+                'TABLE[%d] row%d 位于【评分区】（从 row%d 起）——'
+                '评分点、赋分表、教师评语一律不许改，连空白也不行。' % (ti, ri, rs))
+        # 封面行：只允许往右侧的**空白值格**里写；往标签格（col0）或
+        # 合并成一格的行里写，会覆盖/重排封面原有文字与空白，直接拦下。
+        if _is_cover_row(cells) and (ci == 0 or len(cells) == 1):
+            problems.append(
+                'TABLE[%d] row%d 是【封面字段行】（「%s」）——'
+                '封面原有文字、空格和换行都不能动。只填写右侧空白栏目，'
+                '不要改标签格。' % (ti, ri, _tc_text(cells[0])[:16]))
         used = len(_tc_text(cells[ci]))
         if used > 60:
             problems.append(
                 '目标格 TABLE[%d] row%d col%d 已有 %d 字，看起来是【模板原有内容】。'
                 '确认要往里写吗？' % (ti, ri, ci, used))
     elif target.mode == 'after':
-        if find_paragraph(doc, target.kw['anchor'], target.kw['occurrence']) is None:
+        p = find_paragraph(doc, target.kw['anchor'], target.kw['occurrence'])
+        if p is None:
             problems.append('找不到锚点段落：%r' % target.kw['anchor'])
+            return problems
+        loc = locate_cell(doc, p._p)
+        if loc is not None:
+            ti, ri, _ = loc
+            el = tables(doc)[ti]
+            cells = _row_cells(el.findall(qn('w:tr'))[ri])
+            rs = _rubric_start(el)
+            if row_looks_like_rubric(el, ri) or (rs is not None and ri >= rs):
+                problems.append(
+                    '锚点段落位于 TABLE[%d] row%d 的【评分区】——'
+                    '不能在评分表内部插入内容。' % (ti, ri))
+            if _is_cover_row(cells):
+                problems.append(
+                    '锚点段落位于 TABLE[%d] row%d 的【封面字段行】——'
+                    '封面区域不允许插入内容。' % (ti, ri))
+        else:
+            txt = _norm(p.text)
+            if (len(txt) <= 30
+                    and any(_norm(h) in txt for h in COVER_HINTS)):
+                problems.append(
+                    '锚点段落「%s」疑似【封面字段】——不要在封面区域插入内容。'
+                    % p.text.strip()[:20])
+            if sum(1 for h in RUBRIC_HINTS if _norm(h) in txt) >= 2:
+                problems.append(
+                    '锚点段落「%s」疑似【评分/评价文字】——不要在评分区插入内容。'
+                    % p.text.strip()[:20])
+    elif target.mode == 'end':
+        blocks = [e for e in doc.element.body.iterchildren()
+                  if e.tag in (qn('w:p'), qn('w:tbl'))]
+        if blocks and blocks[-1].tag == qn('w:tbl') and looks_like_rubric(blocks[-1]):
+            problems.append(
+                '文档以【评分表】结尾，at_end() 会把正文写到评分表之后。'
+                '请显式指定正文区的 Target。')
     return problems
 
 
@@ -625,6 +672,152 @@ def diff_snapshot(before, after):
     return problems
 
 
+# --------------------------------------------------------------------------
+# 保护区：封面、评分点、评分表、模板原有段落/表格属性、页眉页脚/样式部件
+#
+# diff_snapshot 只比“字数”，看不出空白、换行、字体、结构的改动。封面和评分表
+# 恰恰是**连空行和空格都不能动**的地方——老师一眼就能看出排版被重排过。
+# 所以这里直接对 XML 做字节级哈希：任何空白、换行、rPr/pPr、顺序变化都会被抓到。
+#
+# 只保护**写入前就存在**的元素；写入过程中新增的段落、表格、单元格正常忽略。
+# --------------------------------------------------------------------------
+
+
+def _xml_hash(el):
+    """元素 XML 的哈希。空白、换行、格式属性都参与比较。"""
+    from lxml import etree
+    return hashlib.sha256(etree.tostring(el)).hexdigest()
+
+
+def protected_snapshot(doc, skip=None):
+    """记录所有**不许改动**的模板元素及其 XML 哈希。
+
+    skip = (table_idx, row_idx, col_idx)：目标单元格。清空/写入它会改动这一格，
+    所以比较该行时把这一格换成空壳，其余部分——包括格与格之间的空白——照常保护。
+    返回 `[(label, element, hash), ...]`，element 用来在写入后按身份找回同一个节点。
+    """
+    items = []
+    body = doc.element.body
+    pi = ti = 0
+
+    for child in body.iterchildren():
+        tag = child.tag
+        if tag == qn('w:p'):
+            items.append(('P[%d] 段落' % pi, child, _xml_hash(child)))
+            pi += 1
+        elif tag == qn('w:tbl'):
+            tbl_label = 'TABLE[%d]' % ti
+            pr = child.find(qn('w:tblPr'))
+            if pr is not None:
+                items.append((tbl_label + ' 表格属性', pr, _xml_hash(pr)))
+            grid = child.find(qn('w:tblGrid'))
+            if grid is not None:
+                items.append((tbl_label + ' 列定义', grid, _xml_hash(grid)))
+
+            target_row = skip[1] if skip and skip[0] == ti else None
+            target_col = skip[2] if skip and skip[0] == ti else None
+            for ri, tr in enumerate(child.findall(qn('w:tr'))):
+                label = '%s row%d' % (tbl_label, ri)
+                if ri == target_row:
+                    clone = copy.deepcopy(tr)
+                    tcs = _row_cells(clone)
+                    ci = target_col if target_col < len(tcs) else None
+                    if ci is not None:
+                        old = tcs[ci]
+                        shell = OxmlElement('w:tc')
+                        shell.tail = old.tail          # 留住格与格之间的空白
+                        old.getparent().replace(old, shell)
+                    items.append((label, tr, _xml_hash(clone)))
+                else:
+                    items.append((label, tr, _xml_hash(tr)))
+            ti += 1
+        elif tag == qn('w:sectPr'):
+            items.append(('节属性（页边距/纸张）', child, _xml_hash(child)))
+
+    if skip:
+        tbls = tables(doc)
+        ti_, ri_, ci_ = skip
+        if ti_ < len(tbls):
+            trs = tbls[ti_].findall(qn('w:tr'))
+            if ri_ < len(trs):
+                tcs = _row_cells(trs[ri_])
+                if ci_ < len(tcs):
+                    tc_pr = tcs[ci_].find(qn('w:tcPr'))
+                    if tc_pr is not None:
+                        items.append(('目标格的单元格属性', tc_pr, _xml_hash(tc_pr)))
+
+    # 页眉/页脚、样式、编号等是独立的部件，不在 body 里；一并做字节级保护。
+    protected_types = ('/header', '/footer', '/styles', '/numbering')
+    for rel in doc.part.rels.values():
+        if getattr(rel, 'is_external', False):
+            continue
+        if not any(rel.reltype.endswith(t) for t in protected_types):
+            continue
+        try:
+            part = rel.target_part
+            items.append(('关联部件 %s' % part.partname, part,
+                          hashlib.sha256(part.blob).hexdigest()))
+        except Exception:                            # noqa: BLE001
+            continue
+    return items
+
+
+def locate_cell(doc, el):
+    """找出元素所在的**顶层表格单元格**，返回 (table_idx, row_idx, col_idx)。
+
+    元素不在表格里（或只在嵌套表里）时返回 None。`Target.after()` 的锚点
+    有可能落在表格单元格内，这时插入内容会改变那一行；必须把该格排除出
+    保护区，否则 finish() 会误报。
+    """
+    top_tbls = tables(doc)
+    node = el
+    while node is not None:
+        tc = node.getparent()
+        while tc is not None and tc.tag != qn('w:tc'):
+            tc = tc.getparent()
+        if tc is None:
+            return None
+        tr = tc.getparent()
+        while tr is not None and tr.tag != qn('w:tr'):
+            tr = tr.getparent()
+        if tr is None:
+            return None
+        tbl = tr.getparent()
+        while tbl is not None and tbl.tag != qn('w:tbl'):
+            tbl = tbl.getparent()
+        if tbl is None:
+            return None
+
+        if any(tbl is t for t in top_tbls):
+            ti = next(i for i, t in enumerate(top_tbls) if tbl is t)
+            ri = next((i for i, t in enumerate(tbl.findall(qn('w:tr')))
+                       if t is tr), None)
+            ci = next((i for i, t in enumerate(_row_cells(tr))
+                       if t is tc), None)
+            if ri is None or ci is None:
+                return None
+            return (ti, ri, ci)
+
+        # 命中的是嵌套表：继续往上找外层单元格，保护真正会被改动的顶层行。
+        node = tbl
+    return None
+
+
+def diff_protected(before, after):
+    """比对保护区。任何空白/换行/字体/结构变化都会报出来（空 = 没动过）。"""
+    after_map = {id(el): (label, h) for label, el, h in after}
+    problems = []
+    for label, el, h in before:
+        key = id(el)
+        if key not in after_map:
+            problems.append('%s 不见了（被删除或替换）——模板原有内容不许删改' % label)
+        elif after_map[key][1] != h:
+            problems.append(
+                '%s 被改动（内容、空白/换行、字体或结构都算）——'
+                '封面/评分表/模板原有内容必须逐字节保持原样' % label)
+    return problems
+
+
 class Cursor:
     """按显式目标往模板里落内容，并在收尾时验证模板没被破坏。
 
@@ -641,7 +834,8 @@ class Cursor:
        逼你说清楚为什么确认这个目标是对的。
     2. 清空目标格**延迟到首次写入之后**才做。构造 Cursor 不改动文档，
        所以检查不过、你放弃写入时，模板还是原封不动的。
-    3. `finish()` 比对结构指纹，报告除目标格以外的任何变化。
+    3. `finish()` 比对结构指纹 + **保护区 XML 哈希**，报告除目标格以外的任何
+       变化——包括封面/评分表/模板原有段落里改动的一个空格或一个换行。
     """
 
     def __init__(self, doc, target, keep_paras=0, clear=True, force=None):
@@ -656,22 +850,29 @@ class Cursor:
         self._cell_tc = None
         self._problems = None                 # 惰性求值，首次 put 时算
         self._reason = force
+        self._skip = None
 
         if target.mode == 'cell':
             tbls = tables(doc)
             el = tbls[target.kw['table']]
             tr = el.findall(qn('w:tr'))[target.kw['row']]
             self._cell_tc = _row_cells(tr)[target.kw['col']]
+            self._skip = (target.kw['table'], target.kw['row'], target.kw['col'])
             # 注意：这里**不清空**。清空推迟到首次 put()，见 _guard()。
         elif target.mode == 'after':
             p = find_paragraph(doc, target.kw['anchor'], target.kw['occurrence'])
             if p is None:
                 raise ValueError('找不到锚点段落：%r' % target.kw['anchor'])
             self._anchor_el = p._p
+            # 锚点在表格单元格内时，插入会改变该格；把它排除出保护区。
+            self._skip = locate_cell(doc, p._p)
         else:                                     # end：用 body 里最后一个块级元素作锚
             blocks = [e for e in doc.element.body.iterchildren()
                       if e.tag in (qn('w:p'), qn('w:tbl'))]
             self._anchor_el = blocks[-1] if blocks else None
+
+        # 保护区必须在任何改动之前拍快照；目标格本身允许变，其余逐字节保护。
+        self._protected = protected_snapshot(doc, self._skip)
 
     # ---------------------------------------------------------------- 安全检查
     def check(self):
@@ -726,10 +927,16 @@ class Cursor:
 
     # ---------------------------------------------------------------- 收尾
     def finish(self):
-        """收尾并返回模板结构比对报告（列表。空 = 没动到模板其它地方）。"""
+        """收尾并返回模板保护报告（列表。空 = 没动到模板其它地方）。
+
+        两道检查一起报：表格结构指纹（字数级）+ 保护区 XML 哈希（字节级，
+        能抓到空白、换行、字体和结构改动）。
+        """
         if self.target.mode == 'cell' and self._cell_tc is not None:
             finish_cell(_CellProxy(self._cell_tc))
-        return diff_snapshot(self.before, snapshot(self.doc))
+        problems = diff_snapshot(self.before, snapshot(self.doc))
+        problems += diff_protected(self._protected, protected_snapshot(self.doc, self._skip))
+        return problems
 
 
 class _CellProxy:
