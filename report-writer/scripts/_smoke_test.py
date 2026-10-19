@@ -28,7 +28,7 @@ def check(name, cond, extra=''):
 
 def build_template(path):
     d = Document()
-    d.add_paragraph('课程名称：计算机网络')          # 段落式封面（已填）
+    d.add_paragraph('课程名称：示例课程')          # 段落式封面（已填）
     d.add_paragraph('题　目：')                      # 段落式封面（空，无下划线）
     d.add_paragraph('')
 
@@ -36,7 +36,7 @@ def build_template(path):
     t = d.add_table(rows=4, cols=4)
     t.style = 'Table Grid'
     t.cell(0, 0).text = '实验名称：'
-    t.cell(0, 1).text = 'Linux 编程环境'             # 已填
+    t.cell(0, 1).text = '示例课程一'             # 已填
     t.cell(1, 0).text = '姓　　名：'
     t.cell(1, 1).text = ''
     t.cell(1, 2).text = '学　　号：'
@@ -93,7 +93,7 @@ def main():
     check('无冒号的题目表标签 → next_cell',
           labels.get('题目', {}).get('kind') in ('next_cell', 'inline'))
     check('已填字段的值读出来了',
-          labels.get('实验名称', {}).get('value') == 'Linux 编程环境',
+          labels.get('实验名称', {}).get('value') == '示例课程一',
           labels.get('实验名称'))
     check('下划线不算已填的值', labels.get('题目', {}).get('value') == '',
           labels.get('题目'))
@@ -101,8 +101,8 @@ def main():
     print('\n=== 3. 填封面：标签、下划线、内嵌表都不能动 ===')
     before = K.snapshot(d)
     filled, missed, manual = K.fill_cover(d, {
-        '姓名': '张三', '学号': '21210001', '班级': '21 网络工程',
-        '日期': '2026年10月16日', '题目': '基于 OpenFlow 的校园网实验',
+        '姓名': '张三', '学号': '00000000', '班级': '示例班级',
+        '日期': '2026年10月16日', '题目': '示例课程实验',
         '指导教师': '李四'})
     for line in filled:
         print('    填 ', line)
@@ -117,14 +117,14 @@ def main():
     inner = K.nested_tables(d)[0][1]
     check('内嵌题目表填上了值',
           K._tc_text(K._row_cells(inner.findall(K.qn('w:tr'))[0])[1])
-          == '基于 OpenFlow 的校园网实验',
+          == '示例课程实验',
           K._tc_text(K._row_cells(inner.findall(K.qn('w:tr'))[0])[1]))
     check('内嵌题目标签格没被改',
           K._tc_text(K._row_cells(inner.findall(K.qn('w:tr'))[0])[0]) == '题　目')
     # 覆盖值：已填的格子再填一次，不应变成拼接
-    K.fill_cover(d, {'实验名称': '数据库原理'})
+    K.fill_cover(d, {'实验名称': '示例课程二'})
     check('已填字段被替换而不是拼接',
-          '数据库原理' in d.element.body.xml and 'Linux 编程环境' not in d.element.body.xml)
+          '示例课程二' in d.element.body.xml and '示例课程一' not in d.element.body.xml)
 
     print('\n=== 4. 写入前拦截 ===')
     d2 = Document(tpl)
@@ -213,7 +213,7 @@ def main():
     for _ in range(2):
         r = lab.add_run('＿')
         r.underline = True
-    t2.cell(1, 0).paragraphs[0].add_run('题　目：OpenFlow 实验')   # 标签和值挤在一个 run
+    t2.cell(1, 0).paragraphs[0].add_run('题　目：示例实验')   # 标签和值挤在一个 run
     d4.save(p2)
 
     d5 = Document(p2)

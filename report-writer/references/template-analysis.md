@@ -232,7 +232,7 @@ python scripts/docx_env.py --cover 模板.docx     # --plan 里也带一份
 
 ```python
 before = K.snapshot(d)
-filled, missed, manual = K.fill_cover(d, {'姓名': '张三', '学号': '21210001'})
+filled, missed, manual = K.fill_cover(d, {'姓名': '张三', '学号': '00000000'})
 assert not K.diff_structure(before, K.snapshot(d))   # 结构必须零变化
 ```
 
@@ -247,7 +247,7 @@ assert not K.diff_structure(before, K.snapshot(d))   # 结构必须零变化
 - 标签被拆成「姓」「　」「名」「：」四个 run 也不怕——`_tail_runs()` 先按**字符**定位
   标签结束的位置，必要时切开 run，绝不会误伤标签本身。
 - `＿＿＿＿` 由两个 run 拼成时，只填第一个、其余清空，值不会跑到下一格去。
-- 已经填好的值（`实验名称：Linux 编程环境`）再填一次是**替换**，不会变成拼接。
+- 已经填好的值（`实验名称：示例课程实验`）再填一次是**替换**，不会变成拼接。
 - `underline=True` 才强制加下划线；默认 `None` = 模板什么样就什么样。
 - ⚠️ `w:u` 在 `w:rPr` 里必须排在 `sz` **之后**、`vertAlign` **之前**，位置错了 Word
   报"文件内容已经损坏"（`_ensure_underline()` 已处理）。
