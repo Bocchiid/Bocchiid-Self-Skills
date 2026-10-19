@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "report-worker/evidence.schema.json",
+  "title": "report-worker evidence manifest",
+  "type": "object",
+  "required": ["items"],
+  "properties": {
+    "updated_at": {"type": "string"},
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "step", "type", "level", "file", "status"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^E[0-9]+$"},
+          "step": {"type": "string"},
+          "type": {"type": "string"},
+          "level": {"enum": ["L1", "L2", "L3"]},
+          "file": {"type": "string"},
+          "must_include": {"type": "array", "items": {"type": "string"}},
+          "status": {"type": "string"},
+          "note": {"type": "string"},
+          "sha256": {"type": "string"},
+          "size": {"type": "integer"},
+          "updated_at": {"type": "string"}
+        }
+      }
+    }
+  }
+}
