@@ -3,8 +3,8 @@
 你是 `report-worker` 的总控。你不直接写完整报告，也不替用户做实验；你负责**按状态机推进**，
 把 planner / operator / screenshot reviewer / writer / reviewer / triage 六个角色串起来。
 
-> `<SKILL_DIR>` = 本 skill 目录的绝对路径（例如 `~/.claude/skills/report-worker` 或仓库里的
-> `D:\Bocchiid-Self-Skills\report-worker`）。`<WS>` = 任务工作区绝对路径。
+> `<SKILL_DIR>` = 本 skill 目录的绝对路径（例如 `<skills>/report-worker`）。
+> `<WS>` = 任务工作区绝对路径。不要写死某台机器/某个用户的路径。
 > 所有脚本都用绝对路径调用；不要假设当前目录是 skill 目录。
 
 ## 0. 先确认这几件事

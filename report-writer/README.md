@@ -4,7 +4,8 @@
 
 从材料到成稿：盘点材料 → 解析模板 → 规划结构 → 往模板里插入内容 → 图表题注与交叉引用 → 调页面利用率 → 更新域并交付。
 
-与 [report-reviewer](../report-reviewer/) 配对：**一个写、一个审**。
+与 [report-reviewer](../report-reviewer/) 配对：**一个写、一个审**。本 Skill 可单独使用，也可由
+`report-worker` 编排；不绑定学校、课程或学科，按模板和材料适配。
 
 ## 功能
 
@@ -157,7 +158,7 @@ print(K.cover_fields(d))                    #    封面字段：哪些空着（�
 
 # 2a) 封面：只填用户给了值的字段，标签/下划线/封面图一字不动
 before = K.snapshot(d)
-filled, missed, manual = K.fill_cover(d, {'姓名': '张三', '学号': '21210001'})
+filled, missed, manual = K.fill_cover(d, {'姓名': '张三', '学号': '00000000'})
 assert not K.diff_structure(before, K.snapshot(d))   # 结构必须零变化
 
 # 2b) 正文：显式指定写入目标（目标格里有内嵌表格时不要清空 → clear=False）

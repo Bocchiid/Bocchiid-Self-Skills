@@ -180,15 +180,15 @@ for s in doc.styles:
 
 ```bash
 f=p1
-echo "C:\temp\lab5\$f.docx"      # → C:\temp\lab5$f.docx     ← 错了！
-echo "C:/temp/lab5/$f.docx"      # → C:/temp/lab5/p1.docx    ← 对了
+echo "C:\temp\demo\$f.docx"      # → C:\temp\demo$f.docx     ← 错了！
+echo "C:/temp/demo/$f.docx"      # → C:/temp/demo/p1.docx    ← 对了
 ```
 
 `\$` 在双引号里被 bash 当成**转义的美元符**，变量不再展开，路径里直接多出一个
 字面量 `$f`。症状是脚本报"找不到文件"，而文件明明在——很容易误判成 Word/脚本的问题。
 
-**对策**：用正斜杠 `C:/temp/lab5/$f.docx`（Windows 和 Word COM 都接受），
-或者写成 `"C:\\temp\\lab5\\$f.docx"`。
+**对策**：用正斜杠 `C:/temp/demo/$f.docx`（Windows 和 Word COM 都接受），
+或者写成 `"C:\\temp\\demo\\$f.docx"`。
 
 ⚠️ 别急着把它当成"Word COM 不稳定"。先 `echo` 一下实际传进去的字符串，
 或者让脚本把收到的路径打出来，再下结论。
