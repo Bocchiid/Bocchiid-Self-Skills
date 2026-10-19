@@ -6,7 +6,7 @@
   "required": ["role", "status", "summary"],
   "properties": {
     "role": {
-      "enum": ["planner", "operator", "screenshot_reviewer", "writer", "reviewer", "triage"]
+      "enum": ["planner", "operator", "writer", "reviewer"]
     },
     "status": {"enum": ["ok", "needs_user", "blocked"]},
     "summary": {"type": "string"},
@@ -16,21 +16,6 @@
     "next": {"type": "string"},
     "step": {"type": "string"},
     "verdict": {"type": "string"},
-    "verdicts": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "id": {"type": "string"},
-          "file": {"type": "string"},
-          "step": {"type": "string"},
-          "verdict": {"type": "string"},
-          "missing": {"type": "array", "items": {"type": "string"}},
-          "recapture": {"type": "string"}
-        }
-      }
-    },
-    "recapture": {"type": "array", "items": {"type": "string"}},
     "round": {"type": "integer"},
     "score": {"type": "string"},
     "blocking": {"type": "array"},

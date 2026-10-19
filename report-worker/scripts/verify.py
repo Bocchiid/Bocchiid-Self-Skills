@@ -21,8 +21,8 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 PHASES = {
-    "INIT", "PLAN", "PLAN_FREEZE", "EXECUTE", "STEP_VERIFY",
-    "EVIDENCE_REVIEW", "RECAPTURE", "WRITE", "REVIEW", "TRIAGE",
+    "ANALYZE", "COLLECT", "ORGANIZE", "PLAN", "PLAN_FREEZE",
+    "EXECUTE", "WRITE", "REVIEW", "REVISE",
     "WAITING_USER", "DONE", "BLOCKED",
 }
 ACTION_KINDS = {"command", "gui", "file_edit", "manual", "analysis"}
@@ -305,7 +305,7 @@ def check_step(plan: dict, step_id: str, result: dict, workspace: Path) -> dict:
             detail = f"{p} field={a.get('field')}"
         elif atype == "visual":
             needs_visual.append(str(a.get("description", "")))
-            detail = "visual check deferred to screenshot reviewer"
+            detail = "visual check deferred to evidence review/user"
         elif atype == "manual":
             needs_user.append(str(a.get("description", "")))
             detail = "manual check requires user"

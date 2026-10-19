@@ -375,6 +375,32 @@ def cmd_shot(args: argparse.Namespace) -> int:
     return 0 if result.get("ok") else 1
 
 
+def cmd_crop(args: argparse.Namespace) -> int:
+    try:
+        from PIL import Image
+    except Exception as exc:
+        raise SystemExit(f"Pillow required for crop: {exc}")
+    src = Path(args.input)
+    dst = Path(args.output)
+    if not src.is_absolute():
+        src = Path(args.workspace).resolve() / src
+    if not dst.is_absolute():
+        dst = Path(args.workspace).resolve() / dst
+    if not src.exists():
+        raise SystemExit(f"input not found: {src}")
+    x, y, w, h = args.box
+    img = Image.open(src)
+    box = (max(0, x), max(0, y), min(img.width, x + w), min(img.height, y + h))
+    cropped = img.crop(box)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    cropped.save(dst, "PNG")
+    result = {"ok": True, "file": str(dst), "box": list(box),
+              "width": cropped.width, "height": cropped.height,
+              "sha256": sha256_file(dst)}
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
 def cmd_add(args: argparse.Namespace) -> int:
     workspace = Path(args.workspace).resolve()
     entry = add_evidence(
@@ -423,6 +449,13 @@ def main() -> int:
     p.add_argument("--level", default="L1")
     p.add_argument("--must-include", action="append")
     p.set_defaults(func=cmd_shot)
+
+    p = sub.add_parser("crop")
+    p.add_argument("--in", dest="input", required=True)
+    p.add_argument("--out", dest="output", required=True)
+    p.add_argument("--box", type=parse_region, required=True,
+                   help="x,y,w,h in pixels")
+    p.set_defaults(func=cmd_crop)
 
     p = sub.add_parser("add")
     p.add_argument("--id", required=True)

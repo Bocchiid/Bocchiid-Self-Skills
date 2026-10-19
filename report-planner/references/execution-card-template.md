@@ -185,8 +185,10 @@
 | 差 | 好 |
 | --- | --- |
 | "截一张图" | "E8：Wireshark 选中 Packet-In，展开报文树，必须看到 Version/Type/Length/Buffer ID/Reason" |
-| "截图记录结果" | "E4：截 `dump-flows` 完整输出，必须含 priority、match、actions、n_packets" |
+| "截图记录结果" | "E4：只截 `dump-flows` 的命令 + 关键输出行，必须含 priority、match、actions、n_packets；不要整屏" |
 | "截配置页" | "E3：截配置页 + 顶部设备名/版本，红框标出目标接口" |
+| "把整个 IDE 截进来" | "只截改动的那段代码 + 文件名/行号；完整代码用文本块" |
+| "截整个终端" | "只截命令 + 结果 + 提示符；无关历史滚出画面" |
 
 ### 绘图要求不算用户截图
 

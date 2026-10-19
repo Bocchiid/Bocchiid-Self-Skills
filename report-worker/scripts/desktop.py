@@ -97,6 +97,24 @@ def focus_window(title: str) -> dict:
     return capture.focus_window(title)
 
 
+def notify(title: str, message: str = "") -> dict:
+    """Bring the agent window forward and flash it (Windows)."""
+    import capture
+    win = capture.find_window(title)
+    if not win:
+        return {"ok": False, "error": f"window not found: {title}",
+                "windows": [w.get("title") for w in capture.list_windows()]}
+    res = capture.focus_window(title)
+    if os.name == "nt" and win.get("id"):
+        try:
+            import win32gui
+            win32gui.FlashWindow(win["id"], True)
+        except Exception:
+            pass
+    return {"ok": bool(res.get("ok")), "window": win, "message": message,
+            "detail": res}
+
+
 def foreground_title() -> str:
     if os.name != "nt":
         return ""
@@ -551,6 +569,11 @@ def main() -> int:
     p.add_argument("--title", required=True)
     p.set_defaults(cmd_name="focus")
 
+    p = sub.add_parser("notify")
+    p.add_argument("--title", required=True)
+    p.add_argument("--message", default="")
+    p.set_defaults(cmd_name="notify")
+
     p = sub.add_parser("type")
     p.add_argument("--text", required=True)
     p.set_defaults(cmd_name="type")
@@ -598,6 +621,8 @@ def main() -> int:
         result = {"ok": True, "windows": list_windows()}
     elif args.cmd_name == "focus":
         result = focus_window(args.title)
+    elif args.cmd_name == "notify":
+        result = notify(args.title, args.message)
     elif args.cmd_name == "type":
         result = type_text(args.text)
     elif args.cmd_name == "keys":
