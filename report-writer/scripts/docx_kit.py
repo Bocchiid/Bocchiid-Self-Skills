@@ -22,7 +22,7 @@ helper 把内容塞进模板的可编写区域。不要用 python-docx 重建文
     # ① 封面：只填用户给了值的字段，标签/下划线/图片一字不动
     for e in K.cover_fields(d):
         print(e['where'], e['label'], repr(e['value']))
-    K.fill_cover(d, {'姓名': '张三', '学号': '2121...'})
+    K.fill_cover(d, {'姓名': '示例姓名', '学号': '00000000'})
 
     # ② 正文：定位那个“框”，往里写（不要清空含内嵌表格的格子）
     cell = K.editable_cell(K.find_frame(d)[0], row=3)
@@ -1200,7 +1200,7 @@ def _strip_underline(r):
 
 def _split_run_at(r, cut):
     """把 run 的文字从第 cut 个字符切开，后半段独立成一个 run（格式照抄）。
-    用来把「姓　名：张三」里的值部分单独拎出来。"""
+    用来把「姓　名：示例姓名」里的值部分单独拎出来。"""
     t = _run_text(r)
     _set_run_text(r, t[:cut])
     new = OxmlElement('w:r')
@@ -1376,7 +1376,7 @@ def fill_cover(doc, values, underline=None, limit=40):
     """按标签把值填进封面/表头字段。**只改值，不动标签、不清空、不删框。**
 
         before = K.snapshot(doc)
-        filled, missed, manual = K.fill_cover(doc, {'姓名': '张三'})
+        filled, missed, manual = K.fill_cover(doc, {'姓名': '示例姓名'})
         print(K.diff_structure(before, K.snapshot(doc)))   # 必须为空
 
     同一标签出现多次就都填（封面一份、题目表一份很常见）。

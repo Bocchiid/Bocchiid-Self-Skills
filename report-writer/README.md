@@ -158,7 +158,7 @@ print(K.cover_fields(d))                    #    封面字段：哪些空着（�
 
 # 2a) 封面：只填用户给了值的字段，标签/下划线/封面图一字不动
 before = K.snapshot(d)
-filled, missed, manual = K.fill_cover(d, {'姓名': '张三', '学号': '00000000'})
+filled, missed, manual = K.fill_cover(d, {'姓名': '示例姓名', '学号': '00000000'})
 assert not K.diff_structure(before, K.snapshot(d))   # 结构必须零变化
 
 # 2b) 正文：显式指定写入目标（目标格里有内嵌表格时不要清空 → clear=False）
