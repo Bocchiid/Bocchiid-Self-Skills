@@ -19,6 +19,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 import actions
 import capture
+import env
 import verify
 import worker as worker_mod
 
@@ -190,6 +191,16 @@ def test_action_durability() -> None:
         check("action pid recorded", bool(r.get("pid")))
 
 
+def test_skills() -> None:
+    print("[skills]")
+    with tempfile.TemporaryDirectory() as td:
+        ws = Path(td)
+        result = env.check_skills(ws)
+        check("planner/writer/reviewer found", result["ok"], str(result))
+        check("skill paths are absolute",
+              all(Path(p).is_absolute() for p in result["skills"].values() if p))
+
+
 def test_plan() -> None:
     print("[plan]")
     ok = verify.validate_plan(sample_plan())
@@ -215,18 +226,19 @@ def test_state() -> None:
         worker_mod.create_dirs(ws)
         state = worker_mod.default_state(ws, "assist", "local", "", "smoke")
         worker_mod.save_state(ws, state)
-        check("initial phase INIT", worker_mod.load_state(ws)["phase"] == "INIT")
-        worker_mod.advance(state, "PLAN")
-        check("INIT -> PLAN", state["phase"] == "PLAN")
+        check("initial phase ANALYZE", worker_mod.load_state(ws)["phase"] == "ANALYZE")
+        worker_mod.advance(state, "ORGANIZE")
+        check("ANALYZE -> ORGANIZE", state["phase"] == "ORGANIZE")
         try:
             worker_mod.advance(state, "EXECUTE")
-            check("illegal PLAN -> EXECUTE rejected", False)
+            check("illegal ORGANIZE -> EXECUTE rejected", False)
         except SystemExit:
-            check("illegal PLAN -> EXECUTE rejected", True)
+            check("illegal ORGANIZE -> EXECUTE rejected", True)
         plan = sample_plan()
         (ws / "_worker" / "plan.json").write_text(
             json.dumps(plan, ensure_ascii=False), encoding="utf-8")
         state["plan"]["frozen"] = True
+        worker_mod.advance(state, "PLAN")
         worker_mod.advance(state, "PLAN_FREEZE")
         worker_mod.advance(state, "EXECUTE")
         check("freeze-like path reaches EXECUTE", state["phase"] == "EXECUTE")
@@ -371,6 +383,7 @@ def main() -> int:
     args = ap.parse_args()
     test_classify()
     test_env_isolation()
+    test_skills()
     test_durability()
     test_action_durability()
     test_plan()

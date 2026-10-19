@@ -12,8 +12,8 @@
     "last_heartbeat": {"type": "string"},
     "session_log": {"type": "string"},
     "phase": {
-      "enum": ["INIT", "PLAN", "PLAN_FREEZE", "EXECUTE", "STEP_VERIFY",
-               "EVIDENCE_REVIEW", "RECAPTURE", "WRITE", "REVIEW", "TRIAGE",
+      "enum": ["ANALYZE", "COLLECT", "ORGANIZE", "PLAN", "PLAN_FREEZE",
+               "EXECUTE", "WRITE", "REVIEW", "REVISE",
                "WAITING_USER", "DONE", "BLOCKED"]
     },
     "previous_phase": {"type": ["string", "null"]},

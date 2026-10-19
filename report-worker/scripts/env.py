@@ -203,6 +203,46 @@ def probe() -> dict:
     }
 
 
+def _skill_candidates(name: str, workspace: Path) -> list[Path]:
+    candidates: list[Path] = []
+    env = os.environ.get("REPORT_SKILLS_DIR")
+    if env:
+        candidates.append(Path(env) / name)
+    cfg = workspace / "_worker" / "skills.json"
+    if cfg.exists():
+        try:
+            data = json.loads(cfg.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and data.get(name):
+                candidates.append(Path(data[name]))
+        except (OSError, json.JSONDecodeError):
+            pass
+    candidates += [
+        Path(__file__).resolve().parent.parent.parent / name,
+        Path.home() / ".claude" / "skills" / name,
+        Path.home() / ".codex" / "skills" / name,
+    ]
+    return candidates
+
+
+def resolve_skill(name: str, workspace: Path) -> Path | None:
+    for candidate in _skill_candidates(name, workspace):
+        if (candidate / "SKILL.md").exists():
+            return candidate.resolve()
+    return None
+
+
+def check_skills(workspace: Path) -> dict:
+    names = ["report-planner", "report-writer", "report-reviewer"]
+    found = {name: resolve_skill(name, workspace) for name in names}
+    missing = [name for name, path in found.items() if path is None]
+    return {
+        "ok": not missing,
+        "skills": {name: str(path) if path else "" for name, path in found.items()},
+        "missing": missing,
+        "note": "缺依赖时先问用户安装/复制；可用 REPORT_SKILLS_DIR 或 _worker/skills.json 指定",
+    }
+
+
 def install_plan(info: dict) -> dict:
     system = info["os"]
     missing = [p for p in RECOMMENDED_PY.get(system, [])
@@ -256,6 +296,7 @@ def write_capabilities(workspace: Path, info: dict) -> Path:
         "screenshot_backend": info["screenshot_backend"],
         "desktop_backend": info["desktop_backend"],
         "venv": str(workspace / ".venv") if (workspace / ".venv").exists() else "",
+        "skills": check_skills(workspace)["skills"],
         "environment_isolation": {
             "python": "task-local .venv",
             "env_vars": "child process only; no setx/export",
@@ -273,8 +314,16 @@ def main() -> int:
     ap.add_argument("--probe", action="store_true", help="print capability JSON")
     ap.add_argument("--install-plan", action="store_true", help="print missing deps")
     ap.add_argument("--write", metavar="WORKSPACE", help="write _worker/capabilities.json")
+    ap.add_argument("--check-skills", action="store_true",
+                    help="check the three dependency skills")
+    ap.add_argument("--workspace", default=".",
+                    help="workspace for --check-skills / --write")
     args = ap.parse_args()
     info = probe()
+    if args.check_skills:
+        print(json.dumps(check_skills(Path(args.workspace).resolve()),
+                         ensure_ascii=False, indent=2))
+        return 0
     if args.write:
         path = write_capabilities(Path(args.write).resolve(), info)
         print(json.dumps({"written": str(path), "capabilities": info},
