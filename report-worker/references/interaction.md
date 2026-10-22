@@ -15,6 +15,39 @@ python scripts/worker.py --workspace <WS> set --agent-window "<标题>"
 
 先盘点用户已经给了什么，再列缺口；一次问完。
 
+### 先问五件事（不要默认）
+
+1. **代码/实践部分怎么处理**：我直接生成可运行代码 / 只给骨架 / 你写我审？
+   课程是否允许 AI 代写？
+2. **交付格式**：`.doc` 还是 `.docx`？老师接受 `.docx` 吗？
+3. **主要软件**：Word 还是 WPS？
+4. **模板结构**：行数/栏目名能不能动？默认绝对不能动。
+5. **公式**：是否必须可编辑？必须 → 优先 `.docx`。
+
+顺带问：有没有往届成品/老师样例？只用于格式，不抄内容。
+
+**五项回答必须落盘**，否则 `PLAN_FREEZE` 会被 `decisions` 闸门拒绝：
+
+```bash
+python scripts/worker.py --workspace <WS> decide --key code_policy --value skeleton --note "用户说自己写，我只审查"
+python scripts/worker.py --workspace <WS> decide --key delivery.format --value docx --note "老师接受 docx"
+python scripts/worker.py --workspace <WS> decide --key delivery.editor --value wps --note "主要用 WPS 批改"
+python scripts/worker.py --workspace <WS> decide --key template_editable --value no --note "用户要求严格保持模板行数"
+python scripts/worker.py --workspace <WS> decide --key formula_editable --value yes --note "公式必须可编辑"
+```
+
+合法值：
+
+| key | 可选值 |
+| --- | --- |
+| `code_policy` | `generate` / `skeleton` / `user_writes_review` / `not_applicable` |
+| `delivery.format` | `doc` / `docx` / `pdf` / `same_as_template` |
+| `delivery.editor` | `word` / `wps` / `both` / `unknown` |
+| `template_editable` | `yes` / `no` |
+| `formula_editable` | `yes` / `no` / `not_applicable` |
+
+用户说“随便/你定”也要记录一个值，并在 note 里写“用户授权按默认”，不能沉默跳过。
+
 ```markdown
 ## 我看到的材料
 - [x] 指导书：<路径>
@@ -77,6 +110,38 @@ python scripts/worker.py --workspace <WS> decide \
 
 等用户确认后再开始；需要时分阶段。
 
+## 2.5 方案确认（冻结前）
+
+把方案发给用户过一眼，不要闷头做：
+
+> 我准备按这个方案执行：
+> - 实验目的：...
+> - 实际步骤/环境：...
+> - 代码/实践部分：<代写/骨架/你写我审>
+> - 交付：<.doc/.docx>，主要用 <Word/WPS>
+> - 报告结构：<章节大纲>
+> - 需要你确认：<1~3 个关键点>
+>
+> 确认后我冻结计划并开始；要改哪一项直接说。
+
+用户说“先改一下”就回 PLAN；不要偷偷改计划继续。
+
+## 2.6 截图验收后（不要直接跳 writer）
+
+| 结果 | 提示 |
+| --- | --- |
+| 本阶段通过，还有后续 | 继续下一阶段。 |
+| 本阶段通过，全部完成 | A. 交给 writer；B. 先改执行卡/指导书（升 v1.1）；C. 补 L2/L3。 |
+| 不通过/部分通过 | 给补拍清单；执行卡与实际不符就先改卡。 |
+| 截图合格但结果不符 | 先排错，不重拍同样结果的图。 |
+
+只有所有阶段 L1 通过 + 步骤完成/跳过，才运行：
+
+```bash
+python scripts/verify.py --workspace <WS> execution
+python scripts/worker.py --workspace <WS> advance --to WRITE
+```
+
 ## 3. 执行后
 
 > 本阶段完成，截图/日志已保存到 ...；接下来做 ...。
@@ -126,6 +191,20 @@ python scripts/desktop.py --workspace <WS> notify \
 > 不动封面和评分表。你选哪个？
 
 默认不保留，记录原因，同步 writer/reviewer。
+
+## 7.5 完成时置顶窗口
+
+报告做完后，用户被要求“不要触碰键鼠”。如果完工不提醒，他根本不知道已经好了。
+
+`worker.py` 进入 DONE 会自动调用 `desktop.notify`（需要先 `set --agent-window`）。
+手动兜底：
+
+```bash
+python scripts/desktop.py --workspace <WS> notify \
+  --title "<Agent 窗口标题>" --message "报告已完成，请查看交付文件与审核报告"
+```
+
+如果窗口标题未知，先问用户，或用 `list-windows` 找。
 
 ## 8. 结束前清理
 

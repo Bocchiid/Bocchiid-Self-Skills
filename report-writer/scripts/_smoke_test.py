@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
-"""docx_kit 的两个新能力（封面字段、内嵌表格）的冒烟测试。
+"""docx_kit / diagram_kit 的冒烟测试。
 
 构造一份"像真模板"的文档：封面表单 + 外框 + 框内嵌的题目表 + 正文填写区，
-然后跑一遍：勘察 → 填封面 → 正文写入，检查模板结构是否零破坏。
+然后跑一遍：勘察 → 填封面 → 正文写作 → 模板骨架校验；
+再生成一张示例架构图并跑几何校验，确认能抓到节点重叠/箭头缺失。
 
     python scripts/_smoke_test.py
 """
+import json
 import os
 import sys
 import tempfile
@@ -295,6 +297,67 @@ def main():
             if c.tag in (K.qn('w:p'), K.qn('w:tbl'))]
     check('单元格以段落收尾（Word 不会报损坏）',
           kids[-1] == 'p' and kids[-2] == 'tbl', kids)
+
+    # table_block 不能再生成 1×1 外层表；表后必须有空段
+    d9 = Document()
+    caps9 = K.Captions()
+    caps9.declare('t10', '表')
+    cur = K.Cursor(d9, K.Target.at_end())
+    cur.put_table(caps9, 't10', '测试表', [['a', 'b'], ['1', '2']], [2000, 2000])
+    check('table_block 只生成一张表（没有 1×1 外层表）',
+          K.table_counts(d9) == (1, 1), K.table_counts(d9))
+    last_two = [c.tag.split('}')[-1] for c in d9.element.body.iterchildren()
+                if c.tag in (K.qn('w:p'), K.qn('w:tbl'))][-2:]
+    check('表格后有空段落', last_two == ['tbl', 'p'], last_two)
+
+    # 模板骨架能抓到“加行”
+    shape_before = K.template_shape(d9)
+    d9.tables[0].add_row()
+    check('template_shape 抓到行数变化',
+          bool(K.diff_template_shape(shape_before, K.template_shape(d9))))
+
+    # 跨文档比对（交付前 verify_output 用）：重新打开文件也不能误报
+    tpl_path = os.path.join(tmp, 'shape-tpl.docx')
+    rep_path = os.path.join(tmp, 'shape-rep.docx')
+    dt = Document()
+    tt = dt.add_table(rows=2, cols=2)
+    tt.cell(0, 0).text = '栏目A'
+    tt.cell(0, 1).text = '值'
+    tt.cell(1, 0).text = '栏目B'
+    dt.save(tpl_path)
+    dr = Document(tpl_path)
+    dr.tables[0].add_row().cells[0].text = '摘要'
+    dr.save(rep_path)
+    issues = K.diff_template_documents(Document(tpl_path), Document(rep_path))
+    check('跨文档骨架比对标出加行',
+          any('行数变了' in x for x in issues), issues)
+    same = K.diff_template_documents(Document(tpl_path), Document(tpl_path))
+    check('跨文档骨架比对同文件不误报', not same, same)
+
+    # 示意图：生成 → 几何校验 → 故意造错能报出来
+    print('\n=== 9. diagram_kit / check_diagram ===')
+    import diagram_kit as D
+    import check_diagram as C
+    spec = D.example_spec()
+    layout = D.compute_layout(spec)
+    svg = os.path.join(tmp, 'diagram.svg')
+    png = os.path.join(tmp, 'diagram.png')
+    D.render(layout, __import__('pathlib').Path(svg),
+             __import__('pathlib').Path(png), dpi=200)
+    lay_path = os.path.join(tmp, 'diagram.layout.json')
+    with open(lay_path, 'w', encoding='utf-8') as f:
+        json.dump(layout, f, ensure_ascii=False)
+    res = C.check(layout)
+    check('生成的架构图通过几何校验', res['ok'], res)
+    check('没有节点重叠/穿框/箭头缺失',
+          not res['errors'], res['errors'])
+    bad = json.loads(json.dumps(layout))
+    bad['nodes'][1]['rect']['x'] = bad['nodes'][0]['rect']['x']
+    bad['nodes'][1]['rect']['y'] = bad['nodes'][0]['rect']['y']
+    check('几何校验能抓到节点重叠', not C.check(bad)['ok'])
+    bad2 = json.loads(json.dumps(layout))
+    bad2['edges'][0].pop('arrow', None)
+    check('几何校验能抓到箭头缺失', not C.check(bad2)['ok'])
 
     print('\n通过 %d 项，失败 %d 项' % (OK[0], BAD[0]))
     print('临时目录：%s' % tmp)

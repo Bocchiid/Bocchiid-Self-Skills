@@ -27,6 +27,14 @@ import worker as worker_mod
 PASS = 0
 FAIL = 0
 
+REQUIRED_DECISION_VALUES = {
+    "code_policy": "skeleton",
+    "delivery.format": "docx",
+    "delivery.editor": "word",
+    "template_editable": "no",
+    "formula_editable": "no",
+}
+
 
 def check(name: str, cond: bool, detail: str = "") -> None:
     global PASS, FAIL
@@ -279,7 +287,13 @@ def test_state() -> None:
             encoding="utf-8")
         state["decisions"].append({"key": "materials", "value": "complete",
                                     "note": "用户确认没有缺项"})
+        for key, value in REQUIRED_DECISION_VALUES.items():
+            state["decisions"].append({"key": key, "value": value,
+                                        "note": "smoke test user confirmed"})
         state["plan"]["frozen"] = True
+        # PLAN 现在必须同时产出执行卡和实验指导书，否则 artifacts 闸门会拒绝。
+        (ws / "实验执行卡.md").write_text("执行卡" * 100, encoding="utf-8")
+        (ws / "实验指导书.md").write_text("指导书" * 100, encoding="utf-8")
         worker_mod.advance(state, "PLAN")
         worker_mod.advance(state, "PLAN_FREEZE")
         worker_mod.advance(state, "EXECUTE")
@@ -289,6 +303,40 @@ def test_state() -> None:
         state["execution"]["completed"].append("S1")
         check("no next step after completion",
               worker_mod.next_step(ws, state) is None)
+
+
+def test_gates() -> None:
+    print("[gates]")
+    with tempfile.TemporaryDirectory() as td:
+        ws = Path(td)
+        worker_mod.create_dirs(ws)
+        state = worker_mod.default_state(ws, "assist", "local", "", "smoke")
+        plan = sample_plan()
+        (ws / "_worker" / "plan.json").write_text(
+            json.dumps(plan, ensure_ascii=False), encoding="utf-8")
+        check("decision gate blocks before the intake questions are recorded",
+              not verify.decision_gate(ws, state)["ok"])
+        state["decisions"] = [{"key": k, "value": v, "note": "smoke"}
+                              for k, v in REQUIRED_DECISION_VALUES.items()]
+        check("decision gate passes with all five answers",
+              verify.decision_gate(ws, state)["ok"])
+        check("artifacts gate blocks without both files",
+              not verify.plan_artifacts_gate(ws, state)["ok"])
+        (ws / "实验执行卡.md").write_text("卡" * 300, encoding="utf-8")
+        (ws / "实验指导书.md").write_text("书" * 300, encoding="utf-8")
+        check("artifacts gate passes with cards + guide",
+              verify.plan_artifacts_gate(ws, state)["ok"])
+
+        state["execution"]["completed"] = ["S1"]
+        (ws / "_worker" / "evidence.json").write_text(
+            json.dumps({"items": []}), encoding="utf-8")
+        (ws / "截图验收.md").write_text("- 无待补拍\n", encoding="utf-8")
+        check("execution gate passes when steps done (text-only)",
+              verify.execution_gate(ws, state)["ok"])
+        (ws / "截图验收.md").write_text("| E1 | 不通过：缺字段 |\n",
+                                        encoding="utf-8")
+        check("execution gate blocks pending reshoot",
+              not verify.execution_gate(ws, state)["ok"])
 
 
 def test_step() -> None:
@@ -382,6 +430,12 @@ def test_dod() -> None:
         plan = sample_plan()
         (ws / "_worker" / "plan.json").write_text(
             json.dumps(plan, ensure_ascii=False), encoding="utf-8")
+        (ws / "实验执行卡.md").write_text("执行卡" * 100, encoding="utf-8")
+        (ws / "实验指导书.md").write_text("指导书" * 100, encoding="utf-8")
+        (ws / "截图验收.md").write_text("E1 通过\n", encoding="utf-8")
+        state["execution"]["completed"] = ["S1"]
+        state["decisions"] = [{"key": k, "value": v, "note": "smoke"}
+                              for k, v in REQUIRED_DECISION_VALUES.items()]
         img = ws / "Pictures" / "E1.txt"
         img.write_text("hello", encoding="utf-8")
         capture.add_evidence(ws, "E1", "S1", "Pictures/E1.txt",
@@ -431,6 +485,7 @@ def main() -> int:
     test_analyze_gate()
     test_plan()
     test_state()
+    test_gates()
     test_step()
     test_evidence()
     test_review()

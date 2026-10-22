@@ -1,0 +1,29 @@
+{
+  "title": "示例：三层 Web 架构",
+  "direction": "LR",
+  "layers": [
+    {"id": "client", "name": "接入层"},
+    {"id": "gateway", "name": "网关层"},
+    {"id": "service", "name": "服务层"},
+    {"id": "data", "name": "数据层"}
+  ],
+  "nodes": [
+    {"id": "browser", "label": "浏览器", "layer": "client", "style": "client"},
+    {"id": "cdn", "label": "CDN", "layer": "client", "style": "external"},
+    {"id": "lb", "label": "负载均衡\nNginx", "layer": "gateway", "style": "gateway"},
+    {"id": "api", "label": "API 服务", "layer": "service", "style": "service"},
+    {"id": "auth", "label": "认证服务", "layer": "service", "style": "service"},
+    {"id": "db", "label": "PostgreSQL", "layer": "data", "style": "data"},
+    {"id": "cache", "label": "Redis", "layer": "data", "style": "data"}
+  ],
+  "edges": [
+    {"from": "browser", "to": "cdn", "label": "静态资源"},
+    {"from": "browser", "to": "lb", "label": "HTTPS"},
+    {"from": "cdn", "to": "lb"},
+    {"from": "lb", "to": "api"},
+    {"from": "lb", "to": "auth"},
+    {"from": "api", "to": "db", "label": "读写"},
+    {"from": "auth", "to": "db"},
+    {"from": "api", "to": "cache", "label": "缓存"}
+  ]
+}

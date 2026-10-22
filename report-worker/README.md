@@ -6,11 +6,15 @@
 
 **分析 → 收集 → 整理 → 规划 → 执行 → 撰写 → 评审 → 修改**
 
-- 先盘点用户材料，列缺口并询问；
-- 调用 planner 出执行卡；
-- 执行实验/任务，CLI 为主、GUI 补视觉证据，截图只截核心；
+- 先盘点用户材料，列缺口并询问（代码/实践怎么处理、交付格式、Word/WPS、
+  模板能否改、公式是否可编辑）；五项决策必须用 `worker.py decide` 落盘，
+  否则冻结被拒绝；
+- 调用 planner 出**执行卡 + 实验指导书**（只出执行卡会被 `artifacts` 闸门拒绝）；
+- 执行实验/任务，CLI 为主、GUI 补视觉证据，截图只截核心；分阶段验收，
+  **L1 截图没通过不能进 writer**；
 - 调用 writer 写报告、reviewer 审核；
-- 把审核发现路由回执行/证据/写作/规划，只重跑受影响的下游。
+- 把审核发现路由回执行/证据/写作/规划，只重跑受影响的下游；
+- 完工时把 Agent 窗口置顶/发通知。
 
 三个依赖 skill 可以单独使用；worker 只是可选编排层。
 
@@ -58,6 +62,9 @@ python scripts/worker.py --workspace /path/to/task doctor
 # 盘点材料后记录用户回答，再过 ANALYZE 闸门
 python scripts/worker.py --workspace /path/to/task decide --key materials --value no --note "..."
 python scripts/worker.py --workspace /path/to/task gate --name analyze
+# 冻结前还要记录五项交互决策：code_policy / delivery.format / delivery.editor /
+# template_editable / formula_editable
+python scripts/worker.py --workspace /path/to/task gate --name decisions
 ```
 
 对 Agent 说：
@@ -102,8 +109,8 @@ python scripts/worker.py --workspace /path/to/task gate --name analyze
 ```text
 <task>/
 ├── 材料清单.md
-├── 实验执行卡.md
-├── 实验规划书.md          # 可选
+├── 实验执行卡.md          # 即开即用版
+├── 实验指导书.md          # 完整版（必做；旧名 实验规划书.md）
 ├── 截图验收.md
 ├── 人工操作卡.md
 ├── Pictures/

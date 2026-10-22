@@ -77,12 +77,22 @@ python "<SKILL_DIR>/scripts/desktop.py" --workspace "<WS>" act \
 - 坐标点击 `target.kind="point"` + `x_pct/y_pct`，必须 `--confirm`。
 - 动作前后截图；截图后按核心区域裁剪。
 
-### C. 改代码/配置
+### C. 代码/配置
+
+**先读 `plan.json` 的 `code_policy`，按用户选择执行：**
+
+| `code_policy` | 你做什么 |
+| --- | --- |
+| `generate` | 直接生成可运行代码/配置，逐段解释；用户负责运行、截图、理解 |
+| `skeleton` | 只给思路、伪代码/关键函数框架，不补全业务逻辑 |
+| `user_writes_review` | 用户先写；你只审查、调试、解释，不代写 |
 
 - 先 `snapshot`；
 - 只改计划要求的那几行；
 - 记录 diff；
 - 运行验证命令。
+- 课程禁止 AI 代写时，即使 `code_policy=generate` 也要停下来问用户，改为
+  `skeleton` 或 `user_writes_review`。
 
 ### D. 人工步骤
 
@@ -128,6 +138,22 @@ python "<SKILL_DIR>/scripts/capture.py" --workspace "<WS>" shot \
 
 - 非截图证据用 `capture.py add`。
 - 每步完成后跑 `worker.py heartbeat`。
+
+### 阶段验收与下一步
+
+一个阶段做完后：
+
+1. 按执行卡的阶段证据组逐张核对“必须包含 / 达成效果 / 可读性”；
+2. 把结果写进 `截图验收.md`（通过 / 部分通过 / 不通过 / 需人工复核）；
+3. 给用户**三个选项**，不要直接问“要不要进 writer”：
+   A. 继续下一阶段；B. 按实际情况修改执行卡（升 v1.1）；C. 补 L2/L3 证据；
+4. 所有阶段 L1 通过、步骤完成/跳过，才：
+   ```bash
+   python "<SKILL_DIR>/scripts/verify.py" --workspace "<WS>" execution
+   python "<SKILL_DIR>/scripts/worker.py" --workspace "<WS>" advance --to WRITE
+   ```
+5. 如果 `截图验收.md` 里还有“不通过/待补拍”，`execution` 闸门会拒绝进入 WRITE；
+   先补拍或改卡，不要绕过。
 
 ## 4. 失败与通知
 

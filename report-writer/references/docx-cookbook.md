@@ -76,6 +76,46 @@ Windows PowerShell 5.1 把 `.ps1` 文件按 ANSI 解析（除非有 BOM），所
 - 中文路径通过命令行参数传进去没问题；
 - 实在要在脚本里写死中文路径，就走 ASCII 临时目录中转，最后再 `cp` 回去。
 
+## WPS：1×1 外层表会多显示一圈边框
+
+为了让“表题 + 表格”同页，以前会用无边框 1×1 表格包一层。Word 里看不出来，
+**WPS 会在数据表外再显示一圈表格边框**。
+
+现在 `docx_kit` 已彻底移除这种做法：
+
+```python
+cur.put_table(caps, 'tab', '表题', rows, widths)   # 表题段 + 表格 + 空段
+```
+
+`K.wrapped_table()` 只作为兼容别名，不再生成外层表。检查时数一下
+`K.table_counts(doc)`，多出来的表通常就是残留的外层表。
+
+## compatibilityMode=11：公式会在保存时变图片
+
+`.doc` 转 `.docx` 后 `word/settings.xml` 常仍是 `11`（Word 2003）。这会让 Word
+保存时把 OMML 转成图片，关闭时提示“以前版本/公式转图片”。
+
+```python
+K.set_compatibility_mode(doc, 15)          # Word 2013+
+```
+
+或：
+
+```bash
+powershell -File scripts/word_com.ps1 -Action compat -In 报告.docx
+powershell -File scripts/word_com.ps1 -Action roundtrip -In 报告.docx
+```
+
+`roundtrip` 做“打开 → 保存 → 关闭 → 重新打开”，比较 OMaths 与 InlineShapes 数量。
+
+## 表格后要空一行
+
+- 文档层面：表后补空段落；
+- 单元格层面：`w:tc` 不能以 `w:tbl` 结尾（Word 报“文件内容已经损坏”）。
+
+`table_block(blank_after=True)` 默认补 `new_p()`（正常空段落），同时满足两条。
+不要用 1pt 的 tiny 段落代替，否则肉眼看不到“空一行”。
+
 ## 嵌套表格（框里的题目表）
 
 `w:tc` 的直接子元素可以是 `w:tbl` —— 模板里的题目表、学生信息表就是这么放的。
@@ -195,9 +235,17 @@ echo "C:/temp/demo/$f.docx"      # → C:/temp/demo/p1.docx    ← 对了
 
 ## Word 文件被占用
 
-文件在 Word 里开着时写入会失败。`word_com.ps1` 会先试着自己打开目标文件（独占方式），失败就提示大概率被 Word 占用。
+文件在 Word/WPS 里开着时写入会失败。`K.file_in_use(path)` 会检查 `~$` 锁文件和
+独占打开；`word_com.ps1` 也会先检查，写操作遇到占用直接以**退出码 3** 失败并打印
+`FILE_LOCKED`，不再反复重试。
 
-**提前告知用户比事后报错好**——在动手写之前就检查一次。
+**提前告知用户比事后报错好**——在动手写之前就检查一次。被占用时：
+
+1. 请用户关闭 Word/WPS；
+2. 或另存 `报告-修正版.docx` / `报告-v2.docx`；
+3. 交付说明里写清楚哪个文件最新、关闭后怎么替换。
+
+不要反复重试同一个覆盖操作。
 
 ## 工作目录约定
 

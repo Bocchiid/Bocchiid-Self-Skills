@@ -228,9 +228,11 @@ def next_action(workspace: Path, state: dict) -> dict:
     elif phase == "PLAN":
         base.update({
             "title": "规划：调用 report-planner",
-            "do": "按 01_planner.md 调用 planner，产出执行卡/详细版和 _worker/plan.json。",
-            "expected": ["实验执行卡.md", "_worker/plan.json",
+            "do": "按 01_planner.md 调用 planner。**执行卡和实验指导书都要产出**，"
+                   "再写 _worker/plan.json；先把方案/大纲发给用户确认。",
+            "expected": ["实验执行卡.md", "实验指导书.md", "_worker/plan.json",
                          "_worker/roles/planner.result.json"],
+            "gate": "python verify.py --workspace <WS> artifacts",
             "then": "python worker.py record --role planner --file _worker/roles/planner.result.json",
         })
     elif phase == "PLAN_FREEZE":
@@ -251,8 +253,12 @@ def next_action(workspace: Path, state: dict) -> dict:
             "then": "python worker.py record --role operator --file _worker/roles/operator.result.json",
         })
         if step is None:
-            base["title"] = "执行完成，进入撰写"
-            base["do"] = "所有步骤完成；先做阶段证据验收，再进入 WRITE。"
+            base["title"] = "执行完成：先做截图验收"
+            base["do"] = ("所有步骤完成。先按执行卡的阶段做证据验收，"
+                          "把结果写进 截图验收.md；有不通过项就补拍或改执行卡，"
+                          "**不要直接进 writer**。L1 全部通过、步骤全部完成/跳过后，"
+                          "再 advance --to WRITE。")
+            base["gate"] = "python verify.py --workspace <WS> execution"
             base["then"] = "python worker.py advance --to WRITE"
     elif phase == "WRITE":
         base.update({
@@ -294,6 +300,8 @@ def advance(state: dict, to_phase: str) -> None:
     current = state["phase"]
     if to_phase not in PHASES:
         raise SystemExit(f"unknown phase: {to_phase}")
+    if to_phase not in ALLOWED.get(current, set()):
+        raise SystemExit(f"illegal transition: {current} -> {to_phase}")
     if to_phase == "EXECUTE" and not state.get("plan", {}).get("frozen"):
         raise SystemExit("plan is not frozen; run freeze --confirm first")
     if to_phase == "PLAN" and current in ("ANALYZE", "COLLECT", "ORGANIZE"):
@@ -305,8 +313,32 @@ def advance(state: dict, to_phase: str) -> None:
         if not gate.get("ok"):
             raise SystemExit("analyze gate failed: " + "; ".join(gate.get("errors", [])) +
                              " (run worker.py gate --name analyze; record decisions with decide)")
-    if to_phase not in ALLOWED.get(current, set()):
-        raise SystemExit(f"illegal transition: {current} -> {to_phase}")
+    if to_phase == "PLAN_FREEZE" and current == "PLAN":
+        try:
+            import verify as verify_mod
+            decisions = verify_mod.decision_gate(Path(state["workspace"]), state)
+            artifacts = verify_mod.plan_artifacts_gate(Path(state["workspace"]), state)
+        except Exception as exc:
+            raise SystemExit(f"plan gate failed to run: {exc}")
+        if not decisions.get("ok"):
+            raise SystemExit("interaction decision gate failed: " +
+                             "; ".join(decisions.get("errors", [])) +
+                             " (record code_policy / delivery / template / formula "
+                             "decisions with worker.py decide)")
+        if not artifacts.get("ok"):
+            raise SystemExit("plan artifacts gate failed: " +
+                             "; ".join(artifacts.get("errors", [])) +
+                             " (PLAN must produce both 实验执行卡.md and 实验指导书.md)")
+    if to_phase == "WRITE":
+        try:
+            import verify as verify_mod
+            gate = verify_mod.execution_gate(Path(state["workspace"]), state)
+        except Exception as exc:
+            raise SystemExit(f"execution gate failed to run: {exc}")
+        if not gate.get("ok"):
+            raise SystemExit("execution gate failed: " +
+                             "; ".join(gate.get("errors", [])) +
+                             " (finish steps and screenshot acceptance before WRITE)")
     state["phase"] = to_phase
     log_event(state, "advance", **{"from": current, "to": to_phase})
 
@@ -408,14 +440,37 @@ def cmd_record(args: argparse.Namespace) -> int:
     nxt = record_result(state, role, result)
     try:
         advance(state, nxt)
-    except SystemExit:
+    except SystemExit as exc:
+        # Hard gates must not be bypassed by the "force" fallback: if planner
+        # skipped a deliverable, or execution jumped to WRITE early, stop here.
+        if nxt in ("PLAN_FREEZE", "WRITE"):
+            raise SystemExit(str(exc))
         state["phase"] = nxt
         log_event(state, "recorded", role=role, next=nxt, forced=True)
     save_state(workspace, state)
+    notify_if_done(workspace, state)
     print(json.dumps({"recorded": role, "phase": state["phase"],
                       "next": next_action(workspace, state)},
                      ensure_ascii=False, indent=2))
     return 0
+
+
+def notify_if_done(workspace: Path, state: dict) -> None:
+    """Bring the agent window forward when the report is done.
+
+    Telling the user "do not touch the keyboard" and then finishing silently is
+    exactly how a finished report goes unnoticed. Best effort; never blocks.
+    """
+    if state.get("phase") != "DONE":
+        return
+    title = str(state.get("agent_window", "") or "")
+    if not title:
+        return
+    try:
+        import desktop
+        desktop.notify(title, "报告已完成，请查看交付文件与审核报告")
+    except Exception:
+        pass
 
 
 def cmd_advance(args: argparse.Namespace) -> int:
@@ -423,6 +478,7 @@ def cmd_advance(args: argparse.Namespace) -> int:
     state = load_state(workspace)
     advance(state, args.to)
     save_state(workspace, state)
+    notify_if_done(workspace, state)
     print(json.dumps({"phase": state["phase"], "next": next_action(workspace, state)},
                      ensure_ascii=False, indent=2))
     return 0
@@ -550,6 +606,12 @@ def cmd_gate(args: argparse.Namespace) -> int:
         result = verify_mod.analyze_gate(workspace, state)
     elif args.name == "plan":
         result = verify_mod.validate_plan(load_plan(workspace, state))
+    elif args.name == "decisions":
+        result = verify_mod.decision_gate(workspace, state)
+    elif args.name == "artifacts":
+        result = verify_mod.plan_artifacts_gate(workspace, state)
+    elif args.name == "execution":
+        result = verify_mod.execution_gate(workspace, state)
     elif args.name == "step":
         result_path = Path(args.file or "_worker/actions/last.json")
         if not result_path.is_absolute():
@@ -580,7 +642,8 @@ def cmd_gate(args: argparse.Namespace) -> int:
     elif args.name == "dod":
         result = verify_mod.check_dod(workspace, state)
     else:
-        raise SystemExit("gate must be plan|step|evidence|report|review|dod")
+        raise SystemExit("gate must be analyze|plan|decisions|artifacts|execution|"
+                         "step|evidence|report|review|dod")
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result.get("ok") else 1
 
@@ -830,7 +893,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("gate")
     p.add_argument("--name", required=True,
-                   choices=["analyze", "plan", "step", "evidence", "report", "review", "dod"])
+                   choices=["analyze", "plan", "decisions", "artifacts",
+                            "execution", "step", "evidence", "report", "review", "dod"])
     p.add_argument("--step", default="")
     p.add_argument("--file", default="")
     p.set_defaults(func=cmd_gate)

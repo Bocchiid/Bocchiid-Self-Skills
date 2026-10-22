@@ -17,8 +17,28 @@
 - **材料盘点与追问**：实验指导书、模板、截图、成品报告的清单与缺失话术。
 - **模板解析**：勘察模板形态、显式指定写入目标、提取并迁移格式。
 - **只插入不覆盖，且可验证**：内容追加进模板既有区域，框、页眉页脚、评分表、样式定义原样保留；
-  写入前后比对表格结构指纹（**含框内嵌套的题目表**）**＋ 保护区 XML 哈希**，封面、评分点、
-  评分表和模板原有内容**连空格、空行、换行都不许变**，除了目标格以外的任何变化都会被报出来。
+  写入前后比对表格结构指纹（**含框内嵌套的题目表**）**＋ 模板骨架（行数/列数/合并/栏目名）
+  ＋ 保护区 XML 哈希**，封面、评分点、评分表和模板原有内容**连空格、空行、换行都不许变**，
+  除了目标格以外的任何变化都会被报出来。**禁止为“摘要/结论”加行**：没有对应栏目就嵌入
+  “问题描述”开头 / “算法的优缺点”末尾；确实要改结构先问用户。
+- **表格符合 WPS**：不用 1×1 外层表包“表题 + 表格”（WPS 会多显示一圈边框）；
+  用 `table_block()` 一次落“表题 keepNext + 表格 + 表后空段”；三线表左右边框 nil；
+  单元格留白 80 twips；交付前核对表格总数。
+- **公式与流程图**：显示公式 OMML 结构检查（`m:den` 非空、函数参数不进 `m:sub`）；
+  行内公式不一刀切全转、公式段落左对齐/关 autoSpace、非中文 run 显式字体；
+  箭头 `shrinkA=shrinkB=0`、杆身可见、文字不压框、按最终宽度检查。
+- **AI 画图不靠文生图**：用 D2/Graphviz/Mermaid/draw.io 结构 + 确定性布局引擎；
+  推荐 drawio-mcp（避障正交路由 + polish）、drawio-skill（PNG 自检）、
+  Excalidraw Architect（手绘风）、Agentic Mermaid（几何校验）；详见 `references/diagram-tools.md`。
+- **自带生成+校验**：`diagram_kit.py` 用 JSON 规格生成分层架构图（SVG/PNG + sidecar），
+  `check_diagram.py` 检查节点重叠、文字溢出、线穿框、边自交、箭头缺失/方向错、
+  标签重叠和有效 DPI；无需安装 D2/Graphviz。渲染需要 `matplotlib`，
+  没装时 checker 仍可检查已有 sidecar。
+- **Word/WPS 兼容**：`compatibilityMode=15`；`roundtrip` 检查保存后 OMaths 不变、
+  InlineShapes 不增加；`verify_output.py` 独立复核模板骨架/外层表/表后空行；
+  WPS 未实测就写“需用户确认”。
+- **交互为主**：开工前问清交付格式、Word/WPS、模板能否改、公式是否可编辑；
+  写之前把大纲/样例给用户确认；完工置顶 Agent 窗口。
 - **封面只填值，不破坏封面**：先勘察出「姓　名：____」「题　目」这类字段（带冒号的、不带冒号
   值在右邻格的都认），列成待填清单**问用户**——用户给值就用 `fill_cover()` 填（只改值，
   标签、下划线、封面图一字不动），用户想手填就一个字都不碰。绝不猜姓名/学号/日期。
@@ -49,14 +69,23 @@ report-writer/
 │   ├── writing.md                  # 标题层级、题注写法、正文与分析的写法
 │   ├── freeform.md                 # 无模板/纯文科自由写作：结构、论证、引用、自检
 │   ├── citations.md                # 文献引用规范（GB/T 7714、上标标注）
+│   ├── tables.md                   # 不用 1×1 外层表、表后空行、三线表、留白、表格数量
+│   ├── formulas.md                 # 显示公式 OMML 检查、行内公式 WPS 间距、字体
+│   ├── diagrams.md                 # 流程图/对比图：箭头杆身、端点、文字不压框
+│   ├── diagram-tools.md            # AI 画图工具选型：drawio-mcp、D2、Excalidraw、Mermaid 等
+│   ├── diagram-spec-example.json   # diagram_kit.py 的 JSON 规格示例
+│   ├── compatibility.md            # Word/WPS、compatibilityMode、往返测试、文件锁
 │   ├── layout-tuning.md            # 页面利用率的统计范围与收敛方法
 │   └── docx-cookbook.md            # python-docx / Word COM 技术要点与踩坑清单
 └── scripts/
     ├── docx_env.py                 # 环境探测 + 文档结构探查 + 封面字段清单
-    ├── docx_kit.py                 # 工具库：勘察 / 安全写入 / 封面填值 / 保护区校验 / 题注 / 表格
+    ├── docx_kit.py                 # 工具库：勘察 / 安全写入 / 骨架与保护区校验 / 题注 / 表格 / 兼容模式
     ├── page_fill.py                # 页面利用率测量（只统计需编写页；--list/--exclude/--pages）
-    ├── word_com.ps1                # .doc ↔ .docx、更新域、导出 PDF
-    └── _smoke_test.py              # 自检：造一份假模板跑 50 项断言
+    ├── verify_output.py            # 交付前独立审计：模板骨架/1×1 外层表/表后空行/兼容模式
+    ├── diagram_kit.py              # JSON 规格 → 分层架构图 SVG/PNG + layout sidecar
+    ├── check_diagram.py            # 图形几何校验：重叠/穿框/自交/箭头/标签/DPI
+    ├── word_com.ps1                # .doc ↔ .docx、更新域、导出 PDF、compat/audit/roundtrip
+    └── _smoke_test.py              # 自检：造一份假模板跑 61 项断言
 ```
 
 ## 安装
@@ -147,6 +176,14 @@ powershell -File scripts/word_com.ps1 -Action to-pdf -In out.docx -Out preview.p
 python scripts/page_fill.py preview.pdf --list
 python scripts/page_fill.py preview.pdf --exclude 2,3   # 排除模板说明页
 python scripts/page_fill.py preview.pdf --pages 4-9      # 或直接圈定范围
+
+# 示意图/架构图：JSON 规格 → SVG/PNG + 几何 sidecar
+python scripts/diagram_kit.py references/diagram-spec-example.json -o figure.svg
+# 几何校验：节点重叠、文字溢出、线穿框、边自交、箭头缺失/方向错、标签重叠、DPI
+python scripts/check_diagram.py figure.layout.json
+
+# 交付前独立审计：模板骨架、1×1 外层表、表后空行、兼容模式
+python scripts/verify_output.py 报告.docx --template 模板.docx --expect-tables 6
 ```
 
 在自己的构建脚本里用工具库：

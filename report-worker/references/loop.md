@@ -14,9 +14,9 @@ ANALYZE → COLLECT → ORGANIZE → PLAN → PLAN_FREEZE
 | ANALYZE | 盘点已有材料、列缺口、确认真实方案 | 关键材料/问题已列出 |
 | COLLECT | 用户补材料/数据/截图 | 缺口有结论（补/没有） |
 | ORGANIZE | 整理证据、数据、来源 | 每个目的至少一条证据 |
-| PLAN | 调 planner 出执行卡/plan.json | `verify.py plan` |
+| PLAN | 调 planner 出执行卡 + 实验指导书 + plan.json | `verify.py plan` + `artifacts` |
 | PLAN_FREEZE | 用户确认实际方案/目的/交付 | 用户确认 + `freeze --confirm` |
-| EXECUTE | 按步骤操作、截图、验收 | 步骤/证据验收 |
+| EXECUTE | 按步骤操作、截图、分阶段验收 | 步骤/证据验收 + `execution` |
 | WRITE | 调 writer 出报告 | 报告可打开、格式跟模板 |
 | REVIEW | 调 reviewer 出审核报告 | `verify.py review` |
 | REVISE | 核实并路由发现 | 修复清单 |
@@ -38,10 +38,48 @@ python worker.py gate --name analyze
 
 没通过不允许 `advance --to PLAN`。
 
+## 规划产出闸门（硬）
+
+进入 PLAN_FREEZE 前必须：
+
+1. 五项交互决策已用 `worker.py decide` 落盘：
+   `code_policy`、`delivery.format`、`delivery.editor`、`template_editable`、
+   `formula_editable`（缺一项就拒绝，不能靠沉默跳过）；
+2. 同时存在且非空：
+   - `实验执行卡.md`（即开即用版）；
+   - `实验指导书.md`（完整版；旧名 `实验规划书.md` 也接受）。
+
+```bash
+python verify.py decisions
+python verify.py artifacts
+```
+
+只出执行卡会被拒绝。不要用“用户只要执行卡”绕过——用户要的是能确认方案和写报告，
+执行卡本身不承担这个功能。
+
 ## 冻结
 
 **未冻结不执行。** 用户确认前只做分析、收集、整理、规划。
 用户改方案就回 PLAN；不偷偷改计划继续。
+
+冻结前把方案/大纲发给用户确认：目的、实际步骤、环境、代码处理方式、交付格式、
+报告结构。
+
+## 执行闸门（硬）
+
+进入 WRITE 前必须：
+
+- 计划步骤全部完成或明确跳过；
+- 有证据时，L1 全部通过；
+- `截图验收.md` 存在，且没有“不通过/待补拍”；
+- 无证据的纯文字任务：在计划里说明清楚，允许放行。
+
+```bash
+python verify.py execution
+```
+
+**截图没验完不能进 writer。** 验收后先给“继续下一阶段 / 修改执行卡 / 补证据”
+三个选项，不要只问“要不要进入 writer”。
 
 计划里的 `conflicts` 用 `skip|keep|pending`：
 `pending` 不允许冻结；`skip` 不写不扣分；`keep` 按 location 写/审。
@@ -60,7 +98,7 @@ python worker.py gate --name analyze
 ## 证据闸门
 
 - 文件存在、SHA256 一致、状态 `通过`；
-- L1 全部通过才进 WRITE；
+- L1 全部通过、`截图验收.md` 无待补拍才进 WRITE；
 - 截图只截核心：代码截改动段，终端截命令+结果，GUI 截目标面板；
 - 截图合格但结果不符：先排错，不重拍同样结果。
 
@@ -73,8 +111,8 @@ python worker.py gate --name analyze
 
 ## DoD
 
-- 计划冻结；目的全覆盖；
-- L1 证据全通过；
+- 计划冻结；五项交互决策已落盘；执行卡 + 实验指导书都在；目的全覆盖；
+- L1 证据全通过；截图验收无待补拍；
 - reviewer 通过/仅有条件通过且只剩建议；
 - 硬要求 100%；
 - 报告可打开、格式一致；
@@ -89,6 +127,8 @@ python worker.py gate --name analyze
 | 截图缺字段/模糊/错步 | operator | 补拍 |
 | 内容浅/缺要求/表述错 | writer | WRITE |
 | 格式/题注/引用/版面/保护区 | writer | WRITE |
+| 模板骨架/1×1 外层表/公式 OMML/兼容模式 | writer | WRITE |
+| WPS 实机问题（未实测或确认存在） | human | WAITING_USER |
 | 计划缺步骤/证据/目的 | planner | PLAN |
 | 需求冲突/无法判断 | human | WAITING_USER |
 | 只有建议/可选 | none | DONE |

@@ -36,7 +36,7 @@ helper 把内容塞进模板的可编写区域。不要用 python-docx 重建文
     K.put(cell, K.body(caps, '拓扑见<<fig_topo>>。'))
     K.put(cell, K.image(cell, 'Pictures/topo.png', width_pt=400))
     K.put(cell, K.caption(caps, 'fig_topo', '实验网络拓扑'))
-    K.put(cell, K.wrapped_table(caps, 'tab_host', '主机地址规划', rows, widths))
+    K.put(cell, K.table_block(caps, 'tab_host', '主机地址规划', rows, widths))
     K.finish_cell(cell)                  # 单元格不能以表格结尾
     d.save('out.docx')
 
@@ -552,8 +552,13 @@ def clear_cell(cell, keep=0):
 
 
 def put(cell, el):
-    """把一个块级元素追加进单元格。内容必须按文档顺序依次追加。"""
-    cell._tc.append(el)
+    """把一个块级元素（或元素列表）追加进单元格。内容必须按文档顺序依次追加。
+
+    `table_block()` / `wrapped_table()` 返回的是列表（表题段 + 表格 + 表后空段），
+    这里统一展开，调用方不用自己循环。
+    """
+    for item in (el if isinstance(el, (list, tuple)) else [el]):
+        cell._tc.append(item)
 
 
 def finish_cell(cell):
@@ -769,6 +774,181 @@ def diff_snapshot(before, after, texts=True):
     return problems
 
 
+def _direct_cell_text(tc):
+    """只取单元格自己的段落文字，不把内嵌表格里的文字算进栏目名。"""
+    parts = []
+    for p in tc.findall(qn('w:p')):
+        parts.extend(t.text or '' for t in p.iter(qn('w:t')))
+    return ''.join(parts).strip()
+
+
+def _cell_shape(tc):
+    """单个格子的结构：合并跨度、纵向合并、归一化后的文字（栏目名）。"""
+    tcPr = tc.find(qn('w:tcPr'))
+    span = 1
+    vmerge = ''
+    if tcPr is not None:
+        gs = tcPr.find(qn('w:gridSpan'))
+        if gs is not None:
+            try:
+                span = int(gs.get(qn('w:val'), '1'))
+            except ValueError:
+                span = 1
+        vm = tcPr.find(qn('w:vMerge'))
+        if vm is not None:
+            vmerge = vm.get(qn('w:val'), 'continue')
+    return (span, vmerge, _norm(_direct_cell_text(tc)))
+
+
+def template_shape(doc):
+    """模板结构快照：每张表的行数、每行格数、合并关系、每格栏目名。
+
+    `snapshot()` 只比“字数”，无法发现“把一行拆成两行但字数不变”“改了左侧栏目名”
+    这类结构改动。本函数专门锁死模板的**版式骨架**，写入前后必须一致。
+
+    返回 `[(表格元素, 标签, 骨架), ...]`；骨架是
+    `(行数, ((格数, ((span, vmerge, 栏目名), ...)), ...))`。
+    用元素身份而不是序号比对，插入新表不会让后面的表错位。
+    """
+    shape = []
+    for label, el in iter_tables(doc.element.body):
+        rows = []
+        for tr in el.findall(qn('w:tr')):
+            cells = tuple(_cell_shape(tc) for tc in _row_cells(tr))
+            rows.append((len(cells), cells))
+        shape.append((el, label, (len(rows), tuple(rows))))
+    return shape
+
+
+def diff_template_shape(before, after, skip_tc=None):
+    """比对模板骨架。返回问题清单（空 = 行数/列数/合并/栏目名都没变）。
+
+    `skip_tc` 是本次唯一允许写入的目标格：只放行它自己的栏目名变化，
+    它的合并属性仍然受保护。
+    """
+    before_map = {id(el): (label, shape) for el, label, shape in before}
+    labels = {id(el): (label or 'TABLE[#%d]' % i)
+              for i, (el, label, _) in enumerate(before)}
+    problems = []
+    seen = set()
+    for el, label, shape in after:
+        key = id(el)
+        if key not in before_map:
+            continue                                  # 新插入的表，正常
+        seen.add(key)
+        name = labels.get(key) or label or '原有表格'
+        old_rows = before_map[key][1][0]
+        new_rows = shape[0]
+        if old_rows != new_rows:
+            problems.append('%s 行数变了：%d → %d（模板行数必须保持原样）'
+                            % (name, old_rows, new_rows))
+            continue
+        for ri, (old_row, new_row) in enumerate(zip(before_map[key][1][1],
+                                                    shape[1])):
+            if old_row[0] != new_row[0]:
+                problems.append('%s row%d 列数变了：%d → %d'
+                                % (name, ri, old_row[0], new_row[0]))
+                continue
+            for ci, (old_cell, new_cell) in enumerate(zip(old_row[1], new_row[1])):
+                if old_cell[0] != new_cell[0]:
+                    problems.append('%s row%d col%d 横向合并变了：%d → %d'
+                                    % (name, ri, ci, old_cell[0], new_cell[0]))
+                if old_cell[1] != new_cell[1]:
+                    problems.append('%s row%d col%d 纵向合并变了：%r → %r'
+                                    % (name, ri, ci, old_cell[1], new_cell[1]))
+                if old_cell[2] != new_cell[2]:
+                    tcs = _row_cells(el.findall(qn('w:tr'))[ri])
+                    if skip_tc is not None and ci < len(tcs) and tcs[ci] is skip_tc:
+                        continue
+                    problems.append('%s row%d col%d 栏目名变了：%r → %r'
+                                    % (name, ri, ci, old_cell[2], new_cell[2]))
+    gone = set(before_map) - seen
+    if gone:
+        problems.append('有 %d 张原有表格不见了（被删除或替换）：%s' % (
+            len(gone), '、'.join(labels.get(k, '?') for k in list(gone)[:3])))
+    return problems
+
+
+def diff_template_documents(template_doc, report_doc):
+    """跨文档比对模板骨架（模板文件 vs 交付文件）。
+
+    `diff_template_shape()` 按元素身份匹配，只适合同一份文档的写入前后；
+    这里按“行数 + 列结构 + 栏目名”匹配，不会因为重新打开文件而误报。
+
+    返回问题清单（空 = 骨架一致）。多出来的数据表只给提示，不判错。
+    """
+    tpl = [(label, shape) for _el, label, shape in template_shape(template_doc)]
+    rep = [(label, shape) for _el, label, shape in template_shape(report_doc)]
+
+    def pattern(shape):
+        return tuple(cell_count for cell_count, _cells in shape[1])
+
+    def labels(shape):
+        return tuple(cell[2] for _count, cells in shape[1] for cell in cells)
+
+    def score(a, b):
+        return sum(1 for x, y in zip(labels(a), labels(b)) if x and x == y)
+
+    used: set[int] = set()
+    issues: list[str] = []
+
+    def find(shape, same_rows):
+        best, best_score = None, -1
+        for j, (_label, cand) in enumerate(rep):
+            if j in used:
+                continue
+            if same_rows:
+                if cand[0] != shape[0] or pattern(cand) != pattern(shape):
+                    continue
+            else:
+                if cand[0] == shape[0] or not cand[1] or not shape[1]:
+                    continue
+                if len(cand[1][0][1]) != len(shape[1][0][1]):
+                    continue
+            s = score(shape, cand)
+            if any(labels(shape)) and s == 0:
+                continue
+            if s > best_score:
+                best, best_score = j, s
+        return best
+
+    for i, (label, shape) in enumerate(tpl):
+        name = label or 'TABLE[#%d]' % i
+        j = find(shape, True)
+        if j is None:
+            j = find(shape, False)
+            if j is not None:
+                used.add(j)
+                issues.append('%s 行数变了：%d → %d（模板行数必须保持原样）'
+                              % (name, shape[0], rep[j][1][0]))
+            else:
+                issues.append('%s 模板表格缺失或被替换' % name)
+            continue
+        used.add(j)
+        cand = rep[j][1]
+        for ri, ((old_count, old_cells), (new_count, new_cells)) in enumerate(
+                zip(shape[1], cand[1])):
+            if old_count != new_count:
+                issues.append('%s row%d 列数变了：%d → %d'
+                              % (name, ri, old_count, new_count))
+                continue
+            for ci, (old_cell, new_cell) in enumerate(zip(old_cells, new_cells)):
+                if old_cell[0] != new_cell[0]:
+                    issues.append('%s row%d col%d 横向合并变了：%d → %d'
+                                  % (name, ri, ci, old_cell[0], new_cell[0]))
+                if old_cell[1] != new_cell[1]:
+                    issues.append('%s row%d col%d 纵向合并变了：%r → %r'
+                                  % (name, ri, ci, old_cell[1], new_cell[1]))
+                if old_cell[2] and old_cell[2] != new_cell[2]:
+                    issues.append('%s row%d col%d 栏目名变了：%r → %r'
+                                  % (name, ri, ci, old_cell[2], new_cell[2]))
+    extra = len(rep) - len(used)
+    if extra > 0:
+        issues.append('报告比模板多出 %d 张表（数据表/附录表正常；若接近图表数，'
+                      '先查 1×1 外层表）' % extra)
+    return issues
+
+
 # --------------------------------------------------------------------------
 # 保护区：封面、评分点、评分表、模板原有段落/表格属性、页眉页脚/样式部件
 #
@@ -950,11 +1130,14 @@ class Cursor:
         self.target = target
         self.parent = doc._body
         self.before = snapshot(doc)
+        # 版式骨架：行数/列数/合并/栏目名。比 snapshot 更严格，专门防“加行/改栏目名”。
+        self.shape_before = template_shape(doc)
         self._anchor_el = None
         self._keep_paras = keep_paras
         self._clear = clear
         self._cleared = False
         self._cell_tc = None
+        self._write_tc = None                 # 允许写入的单元格（含 Target.after 所在格）
         self._problems = None                 # 惰性求值，首次 put 时算
         self._reason = force
         self._skip = None
@@ -964,6 +1147,7 @@ class Cursor:
             el = tbls[target.kw['table']]
             tr = el.findall(qn('w:tr'))[target.kw['row']]
             self._cell_tc = _row_cells(tr)[target.kw['col']]
+            self._write_tc = self._cell_tc
             self._skip = (target.kw['table'], target.kw['row'], target.kw['col'])
             # 注意：这里**不清空**。清空推迟到首次 put()，见 _guard()。
         elif target.mode == 'after':
@@ -973,6 +1157,7 @@ class Cursor:
             self._anchor_el = p._p
             # 锚点在表格单元格内时，插入会改变该格；把它排除出保护区。
             self._skip = locate_cell(doc, p._p)
+            self._write_tc = _ancestor_tc(p._p)
         else:                                     # end：用 body 里最后一个块级元素作锚
             blocks = [e for e in doc.element.body.iterchildren()
                       if e.tag in (qn('w:p'), qn('w:tbl'))]
@@ -998,6 +1183,20 @@ class Cursor:
         self._reason = str(reason)
         return self.check()
 
+    def resnapshot(self, reason):
+        """用户**明确同意**改模板结构后，重新拍快照，作为后续比对的基准。
+
+        这不是绕过检查：默认仍然禁止加行/改栏目名；只有用户看过影响并明确同意，
+        才调用本方法，并把理由写下来（理由会打印出来）。
+        """
+        if not str(reason or '').strip():
+            raise ValueError('resnapshot() 必须给理由：用户同意改哪一处结构、为什么')
+        self.before = snapshot(self.doc)
+        self.shape_before = template_shape(self.doc)
+        self._protected = protected_snapshot(self.doc, self._skip)
+        print('[docx_kit] 已按用户许可重新快照模板结构：%s' % reason)
+        return self
+
     def _guard(self):
         """首次写入前的闸门。检查没过又没有理由 → 直接抛错，什么都不改。"""
         problems = self.check()
@@ -1013,7 +1212,14 @@ class Cursor:
 
     # ---------------------------------------------------------------- 写入
     def put(self, el):
-        """落一个块级元素。首次调用会自动跑安全检查。内容必须按文档顺序依次 put。"""
+        """落一个块级元素（或元素列表）。首次调用会自动跑安全检查。
+
+        `table_block()` 返回列表（表题段 + 表格 + 表后空段），可直接 put。
+        """
+        if isinstance(el, (list, tuple)):
+            for item in el:
+                self.put(item)
+            return el[-1] if el else None
         self._guard()
         if self.target.mode == 'cell':
             if not self._cleared:                 # 通过了检查才清空目标格
@@ -1032,12 +1238,17 @@ class Cursor:
     def put_image(self, path, width_pt):
         return self.put(image(self.parent, path, width_pt))
 
+    def put_table(self, caps, key, cap_text, rows, widths, **kw):
+        """一次落“表题 + 表格 + 表后空行”，不含 1×1 外层表。"""
+        return self.put(table_block(caps, key, cap_text, rows, widths, **kw))
+
     # ---------------------------------------------------------------- 收尾
     def finish(self):
         """收尾并返回模板保护报告（列表。空 = 没动到模板其它地方）。
 
-        两道检查一起报：表格结构指纹（含内嵌表格，字数级）+ 保护区 XML 哈希
-        （字节级，能抓到空白、换行、字体和结构改动）。
+        三道检查一起报：表格结构指纹（含内嵌表格，字数级）+ 模板骨架
+        （行数/列数/合并/栏目名）+ 保护区 XML 哈希（字节级，能抓到空白、
+        换行、字体和结构改动）。
         """
         if self._cell_tc is not None:
             finish_cell(_CellProxy(self._cell_tc))
@@ -1048,6 +1259,9 @@ class Cursor:
             if tc is not None:
                 finish_cell(_CellProxy(tc))
         problems = diff_snapshot(self.before, snapshot(self.doc))
+        skip_tc = self._cell_tc if self._cell_tc is not None else self._write_tc
+        problems += diff_template_shape(self.shape_before, template_shape(self.doc),
+                                        skip_tc=skip_tc)
         problems += diff_protected(self._protected, protected_snapshot(self.doc, self._skip))
         return problems
 
@@ -1551,12 +1765,13 @@ def image(parent, path, width_pt, crop=None):
 
 
 # 单元格文字：9.5pt 是常见报告模板的表格字号，按模板调整
-def _cell_text(txt, sz=19, bold=False):
+def _cell_text(txt, sz=19, bold=False, keep_next=True):
     ps = []
     for line in str(txt).split('\n'):
         p = OxmlElement('w:p')
         pPr = OxmlElement('w:pPr')
-        pPr.append(OxmlElement('w:keepNext'))
+        if keep_next:
+            pPr.append(OxmlElement('w:keepNext'))
         pPr.append(E('w:jc', val='center'))
         p.append(pPr)
         p.append(run(line, rpr(bold=bold, sz=sz)))
@@ -1565,18 +1780,36 @@ def _cell_text(txt, sz=19, bold=False):
 
 
 def _tbl_pr(width, borders):
+    """表格属性。
+
+    borders:
+      True        全框线（普通数据表）
+      False       无边框（只给内部容器用；**不要**再用 1×1 外层表包表题）
+      'three-line' 三线表：只有顶线、表头下线、底线，左右和内部竖线为 nil
+    """
     pr = OxmlElement('w:tblPr')
     pr.append(E('w:tblW', w=str(width), type='dxa'))
     pr.append(E('w:jc', val='center'))
     if borders:
         b = OxmlElement('w:tblBorders')
-        for side in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
-            b.append(E('w:' + side, val='single', sz='4', space='0', color='000000'))
+        if borders == 'three-line':
+            # 顺序必须符合 schema：top → left → bottom → right → insideH → insideV
+            for side in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
+                if side in ('top', 'bottom'):
+                    b.append(E('w:' + side, val='single', sz='6', space='0',
+                               color='000000'))
+                else:
+                    b.append(E('w:' + side, val='nil'))
+        else:
+            for side in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
+                b.append(E('w:' + side, val='single', sz='4', space='0',
+                           color='000000'))
         pr.append(b)
     pr.append(E('w:tblLayout', type='fixed'))
+    # 单元格左右留白：不留白时相邻列文字会贴在一起（WPS 尤其明显）。
     ml = OxmlElement('w:tblCellMar')
-    ml.append(E('w:left', w='0', type='dxa'))
-    ml.append(E('w:right', w='0', type='dxa'))
+    ml.append(E('w:left', w='80', type='dxa'))
+    ml.append(E('w:right', w='80', type='dxa'))
     pr.append(ml)
     pr.append(E('w:tblLook', val='0000', firstRow='0', lastRow='0',
                 firstColumn='0', lastColumn='0', noHBand='0', noVBand='0'))
@@ -1593,12 +1826,23 @@ def _set_grid(tbl, widths):
     tbl.find(qn('w:tblPr')).addnext(g)
 
 
-def make_table(rows, widths, sz=19, split=False):
-    """带边框的数据表。rows[0] 当表头。split=True 时允许整表跨页续排
-    （单行内部仍不可拆），这是解决“页尾留大片空白”最有效的办法。"""
+def make_table(rows, widths, sz=19, split=False, three_line=False,
+               keep_together=True):
+    """数据表。rows[0] 当表头。
+
+    - `split=True`：允许整表跨页续排（单行内部仍不可拆），解决“页尾留大片空白”。
+    - `three_line=True`：三线表（顶线/表头下线/底线，无左右和内部竖线）。
+    - `keep_together=True`：给除最后一行外的所有行加 keepNext，让表格尽量不被拆开。
+      `split=True` 时自动关闭。
+
+    ⚠️ 本函数只返回表格本身；表题、表后空行由 `table_block()` 一并生成。
+    """
+    if split:
+        keep_together = False
     tbl = OxmlElement('w:tbl')
-    tbl.append(_tbl_pr(sum(widths), True))
+    tbl.append(_tbl_pr(sum(widths), 'three-line' if three_line else True))
     tbl.append(OxmlElement('w:tblGrid'))
+    n_rows = len(rows)
     for ri, row in enumerate(rows):
         tr = OxmlElement('w:tr')
         trPr = OxmlElement('w:trPr')
@@ -1611,8 +1855,15 @@ def make_table(rows, widths, sz=19, split=False):
             tc = OxmlElement('w:tc')
             tcPr = OxmlElement('w:tcPr')
             tcPr.append(E('w:tcW', w=str(widths[ci]), type='dxa'))
+            if three_line and ri == 0:
+                # 三线表的中间那条线：表头行底部边框
+                tb = OxmlElement('w:tcBorders')
+                tb.append(E('w:bottom', val='single', sz='6', space='0',
+                            color='000000'))
+                tcPr.append(tb)
             tc.append(tcPr)
-            for p in _cell_text(txt, sz=sz, bold=(ri == 0)):
+            for p in _cell_text(txt, sz=sz, bold=(ri == 0),
+                                keep_next=(keep_together and ri < n_rows - 1)):
                 tc.append(p)
             tr.append(tc)
         tbl.append(tr)
@@ -1620,34 +1871,37 @@ def make_table(rows, widths, sz=19, split=False):
     return tbl
 
 
-def wrapped_table(caps, key, cap_text, rows, widths, sz=19, split=False,
-                  outer_w=8600):
-    """表题 + 表格，一起包进一个无边框 1x1 表格里。
+def table_block(caps, key, cap_text, rows, widths, sz=19, split=False,
+                three_line=True, blank_after=True):
+    """表题段（keepNext）+ 表格 + 表后空段，返回**元素列表**，可直接 `cur.put()`。
 
-    这样做是为了让表题和表格同页：普通段落的 keepNext 对表格不起作用，
-    但 1x1 表格的行带 cantSplit 时，Word 会把整块挪到下一页而不是拆开。
-    split=True 则反过来——允许它跨页，换取页面填满。
+    为什么不用 1×1 外层表：Word 里看不出来，但 WPS 会在数据表外再显示一圈
+    表格边框。用户看到的就是“表格外面又套了一层表”。所以这里彻底去掉外层表。
+
+    同页靠三件事保证：
+      1. 表题段落显式 `keepNext`；
+      2. 表格除最后一行外的行都带 `keepNext`（`split=True` 时关闭）；
+      3. 不拆行（每行 `cantSplit`）。
+
+    `blank_after=True` 在表格后补一个**正常空段落**：既满足“表格后空一行”，
+    也满足“单元格不能以表格结尾”。不要把它换成 1pt 的 tiny 段落——
+    那样只是占位，肉眼看不到“空一行”。
     """
-    outer = OxmlElement('w:tbl')
-    outer.append(_tbl_pr(outer_w, False))
-    outer.append(OxmlElement('w:tblGrid'))
-    tr = OxmlElement('w:tr')
-    trPr = OxmlElement('w:trPr')
-    if not split:
-        trPr.append(OxmlElement('w:cantSplit'))
-    trPr.append(E('w:jc', val='center'))
-    tr.append(trPr)
-    tc = OxmlElement('w:tc')
-    tcPr = OxmlElement('w:tcPr')
-    tcPr.append(E('w:tcW', w=str(outer_w), type='dxa'))
-    tc.append(tcPr)
-    tc.append(caption(caps, key, cap_text, keep_next=True))
-    tc.append(make_table(rows, widths, sz=sz, split=split))
-    tc.append(new_p(tiny=True))         # 单元格不能以表格结尾
-    tr.append(tc)
-    outer.append(tr)
-    _set_grid(outer, [outer_w])
-    return outer
+    block = [caption(caps, key, cap_text, keep_next=True),
+             make_table(rows, widths, sz=sz, split=split,
+                        three_line=three_line, keep_together=not split)]
+    if blank_after:
+        block.append(new_p())
+    return block
+
+
+def wrapped_table(caps, key, cap_text, rows, widths, sz=19, split=False,
+                  outer_w=None):
+    """兼容旧调用的别名。**不再生成 1×1 外层表**，返回同 `table_block()` 的列表。
+
+    `outer_w` 保留只为向后兼容，已无作用。新代码请直接写 `K.table_block(...)`。
+    """
+    return table_block(caps, key, cap_text, rows, widths, sz=sz, split=split)
 
 
 # --------------------------------------------------------------------------
@@ -1668,6 +1922,222 @@ def despace(s):
     自己补视觉间隙即可。仅正文用，题注、表格（居中、短）不必处理。
     """
     return _SP_B.sub('', _SP_A.sub('', s))
+
+
+def set_compatibility_mode(doc, mode=15):
+    """把 `word/settings.xml` 的 compatibilityMode 设为 15（Word 2013+）。
+
+    `.doc` 转 `.docx` 后常常仍是 11（Word 2003）。保持 11 时，Word 保存会把
+    OMML 公式转成图片，而且 Word 关闭时会提示“以前版本/公式转图片”。
+    这一步要在 Word 保存之后做，否则 Word 可能写回 11。
+    """
+    settings = doc.settings.element
+    compat = settings.find(qn('w:compat'))
+    if compat is None:
+        compat = OxmlElement('w:compat')
+        settings.append(compat)
+    # 现代 Word 把模式存在 <w:compatSetting w:name="compatibilityMode">，
+    # 旧写法是 <w:compatibilityMode>。两个都设置，Word 才不会忽略。
+    setting = None
+    for node in compat.findall(qn('w:compatSetting')):
+        if node.get(qn('w:name')) == 'compatibilityMode':
+            setting = node
+            break
+    if setting is None:
+        setting = OxmlElement('w:compatSetting')
+        setting.set(qn('w:name'), 'compatibilityMode')
+        setting.set(qn('w:uri'), 'http://schemas.microsoft.com/office/word')
+        compat.append(setting)
+    setting.set(qn('w:val'), str(mode))
+    node = compat.find(qn('w:compatibilityMode'))
+    if node is not None:          # 旧写法存在才同步，不要凭空新增
+        node.set(qn('w:val'), str(mode))
+    return mode
+
+
+def compatibility_mode(doc):
+    """读当前 compatibilityMode；没有该节点时返回 None。"""
+    settings = doc.settings.element
+    compat = settings.find(qn('w:compat'))
+    if compat is None:
+        return None
+    for node in compat.findall(qn('w:compatSetting')):
+        if node.get(qn('w:name')) == 'compatibilityMode':
+            try:
+                return int(node.get(qn('w:val'), '0'))
+            except ValueError:
+                return None
+    node = compat.find(qn('w:compatibilityMode'))
+    if node is None:
+        return None
+    try:
+        return int(node.get(qn('w:val'), '0'))
+    except ValueError:
+        return None
+
+
+_M_NS = '{http://schemas.openxmlformats.org/officeDocument/2006/math}'
+_PPR_ORDER = [
+    'pStyle', 'keepNext', 'keepLines', 'pageBreakBefore', 'framePr',
+    'widowControl', 'numPr', 'suppressLineNumbers', 'pBdr', 'shd', 'tabs',
+    'suppressAutoHyphens', 'kinsoku', 'wordWrap', 'overflowPunct',
+    'topLinePunct', 'autoSpaceDE', 'autoSpaceDN', 'bidi', 'adjustRightInd',
+    'snapToGrid', 'spacing', 'ind', 'contextualSpacing', 'mirrorIndents',
+    'suppressOverlap', 'jc', 'textDirection', 'textAlignment',
+    'textboxTightWrap', 'outlineLvl', 'divId', 'cnfStyle', 'rPr', 'sectPr',
+    'pPrChange',
+]
+
+
+def _ppr_set(pPr, tag, attrs=None):
+    """在 w:pPr 里按 schema 顺序设置一个子元素（已存在则改属性）。"""
+    name = tag.split(':')[-1]
+    node = pPr.find(qn(tag))
+    if node is None:
+        node = OxmlElement(tag)
+        rank = _PPR_ORDER.index(name) if name in _PPR_ORDER else len(_PPR_ORDER)
+        inserted = False
+        for child in list(pPr):
+            cname = child.tag.split('}')[-1]
+            crank = _PPR_ORDER.index(cname) if cname in _PPR_ORDER else len(_PPR_ORDER)
+            if crank > rank:
+                child.addprevious(node)
+                inserted = True
+                break
+        if not inserted:
+            pPr.append(node)
+    for key, value in (attrs or {}).items():
+        node.set(qn('w:' + key), str(value))
+    return node
+
+
+def left_align_math_paragraphs(doc):
+    """让所有含 OMML 的段落显式左对齐，并关闭 autoSpaceDE/autoSpaceDN。
+
+    Word/WPS 会把继承 `Normal` 的两端对齐套到公式上，导致公式被拉伸、
+    角标间距变大。返回处理的段落数。
+    """
+    changed = 0
+    for p in doc.element.body.iter(qn('w:p')):
+        if not (list(p.iter(_M_NS + 'oMath')) or
+                list(p.iter(_M_NS + 'oMathPara'))):
+            continue
+        pPr = p.find(qn('w:pPr'))
+        if pPr is None:
+            pPr = OxmlElement('w:pPr')
+            p.insert(0, pPr)
+        _ppr_set(pPr, 'w:jc', {'val': 'left'})
+        _ppr_set(pPr, 'w:autoSpaceDE', {'val': '0'})
+        _ppr_set(pPr, 'w:autoSpaceDN', {'val': '0'})
+        changed += 1
+    return changed
+
+
+def force_western_font(doc, font='Times New Roman'):
+    """给所有“纯非中文”run 写入显式西文字体（ascii/hAnsi/eastAsia/cs + hint=default）。
+
+    WPS 对没有显式字体的希腊字母/下标会回退到宋体，按中文字宽排，表现为角标间距大。
+    **必须在 Word 保存之后调用**：Word 保存会把 `w:rFonts` 改回 `hint=eastAsia`。
+    含中文的 run 跳过，避免把正文中文改成西文字体。
+
+    返回改动的 run 数量。
+    """
+    import re as _re
+    cjk = _re.compile(r'[　-〿一-鿿！-｠]')
+    western = _re.compile(r'[A-Za-zͰ-Ͽ]')
+    changed = 0
+    for r in doc.element.body.iter(qn('w:r')):
+        text = ''.join(t.text or '' for t in r.iter(qn('w:t')))
+        if not text or not western.search(text) or cjk.search(text):
+            continue
+        rPr = r.find(qn('w:rPr'))
+        if rPr is None:
+            rPr = OxmlElement('w:rPr')
+            r.insert(0, rPr)
+        fonts = rPr.find(qn('w:rFonts'))
+        if fonts is None:
+            fonts = OxmlElement('w:rFonts')
+            rPr.insert(0, fonts)
+        for attr in ('ascii', 'hAnsi', 'eastAsia', 'cs'):
+            fonts.set(qn('w:' + attr), font)
+        fonts.set(qn('w:hint'), 'default')
+        changed += 1
+    return changed
+
+
+def file_in_use(path):
+    """目标文件是否被 Word/WPS 占用（存在 `~$` 锁文件或无法独占打开）。
+
+    写入前先查，别等覆盖失败才报错。返回 True 时不要反复重试，
+    改用 `<名称>-修正版.<后缀>` 并在交付说明里写清楚。
+    """
+    p = os.path.abspath(path)
+    folder, name = os.path.split(p)
+    if os.path.exists(os.path.join(folder, '~$' + name)):
+        return True
+    if not os.path.exists(p):
+        return False
+    try:
+        f = open(p, 'r+b')
+        f.close()
+        return False
+    except OSError:
+        return True
+
+
+def wrapper_tables(doc):
+    """疑似 1×1 外层包裹表：只有“表 X”表题段落 + 一张嵌套表。
+
+    模板外框（1×1，但里面有正文/小节标题/题目表）不算，避免误报。
+    返回 `[(标签, 表题文字), ...]`。
+    """
+    out = []
+    for label, tbl in iter_tables(doc.element.body):
+        trs = tbl.findall(qn('w:tr'))
+        if len(trs) != 1:
+            continue
+        cells = _row_cells(trs[0])
+        if len(cells) != 1 or not _cell_has_table(cells[0]):
+            continue
+        cell = cells[0]
+        paras = cell.findall(qn('w:p'))
+        captions = [p for p in paras
+                    if re.match(r'^(表|Table)\s*\d', _p_text(p))]
+        substantive = [p for p in paras
+                       if _p_text(p) and p not in captions]
+        if captions and not substantive:
+            out.append((label, ' / '.join(_p_text(p) for p in captions)[:80]))
+    return out
+
+
+def _cell_has_table(tc):
+    return tc.find(qn('w:tbl')) is not None
+
+
+def tables_without_blank(doc):
+    """顶层表格后没有空段落的表（标签列表）。"""
+    out = []
+    for label, tbl in iter_tables(doc.element.body):
+        if tbl.getparent() is not doc.element.body:
+            continue
+        nxt = tbl.getnext()
+        if nxt is None:
+            continue
+        if nxt.tag == qn('w:tbl'):
+            out.append((label, '表格后紧跟另一张表'))
+        elif nxt.tag == qn('w:p') and _p_text(nxt).strip():
+            out.append((label, '表格后不是空段落'))
+    return out
+
+
+def table_counts(doc):
+    """返回 (顶层表格数, 全部表格数)。用于交付前核对“主表 + N 张数据表”。
+
+    如果全部表格数比预期多出与图/表数量相近的数目，通常就是 1×1 外层表没删干净。
+    """
+    top = len(tables(doc))
+    all_count = len(list(iter_tables(doc.element.body)))
+    return top, all_count
 
 
 def compact_image(src, dst, max_px=1800, colors=256):

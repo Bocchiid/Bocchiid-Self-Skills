@@ -6,6 +6,24 @@
   "required": ["version", "purposes", "stages", "steps", "evidence"],
   "properties": {
     "version": {"type": "string", "minLength": 1},
+    "artifacts": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "must include 实验执行卡.md and 实验指导书.md"
+    },
+    "code_policy": {
+      "enum": ["generate", "skeleton", "user_writes_review"],
+      "description": "how code/practical parts are handled; ask the user, never default to generate"
+    },
+    "delivery": {
+      "type": "object",
+      "properties": {
+        "format": {"enum": ["doc", "docx", "pdf"]},
+        "editor": {"enum": ["word", "wps", "other"]},
+        "template_editable": {"type": "boolean"},
+        "formula_editable": {"type": "boolean"}
+      }
+    },
     "purposes": {
       "type": "array",
       "minItems": 1,

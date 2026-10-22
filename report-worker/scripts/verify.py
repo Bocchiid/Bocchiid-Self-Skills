@@ -551,6 +551,136 @@ def check_state(state: Any) -> dict:
     return {"ok": not errors, "errors": errors}
 
 
+REQUIRED_DECISIONS = {
+    "code_policy": {"generate", "skeleton", "user_writes_review", "not_applicable"},
+    "delivery.format": {"doc", "docx", "pdf", "same_as_template"},
+    "delivery.editor": {"word", "wps", "both", "unknown"},
+    "template_editable": {"yes", "no"},
+    "formula_editable": {"yes", "no", "not_applicable"},
+}
+
+
+def decision_gate(workspace: Path, state: dict | None = None) -> dict:
+    """冻结前必须把关键交互问题落盘。
+
+    提示词里写“先问”很容易被跳过；这个闸门要求每一项都有 `worker.py decide`
+    记录。用户可以回答“没有/默认”，但必须显式记录，不能用沉默代替确认。
+    """
+    state = state or {}
+    decisions = _as_list(state.get("decisions"))
+    by_key: dict[str, dict] = {}
+    for item in decisions:
+        if isinstance(item, dict) and item.get("key"):
+            by_key[str(item["key"])] = item
+
+    errors: list[str] = []
+    recorded: dict[str, str] = {}
+    for key, allowed in REQUIRED_DECISIONS.items():
+        item = by_key.get(key)
+        if item is None:
+            errors.append(f"missing decision: {key} (ask the user, then "
+                          f"worker.py decide --key {key} --value ... --note ...)")
+            continue
+        value = str(item.get("value", "")).strip().lower()
+        recorded[key] = value
+        if value not in allowed:
+            errors.append(f"decision {key}={value!r} is invalid; "
+                          f"expected one of {sorted(allowed)}")
+        if not str(item.get("note", "")).strip():
+            errors.append(f"decision {key} has no note; record what the user said")
+    return {"ok": not errors, "errors": errors, "recorded": recorded,
+            "required": sorted(REQUIRED_DECISIONS)}
+
+
+def plan_artifacts_gate(workspace: Path, state: dict | None = None) -> dict:
+    """PLAN 阶段必须同时产出执行卡和实验指导书（完整版）。
+
+    只出执行卡、不出指导书，用户就没有可确认的“实验方案/目的/报告映射”；
+    只出指导书、不出执行卡，现场又没法照着做。两个都要。
+    """
+    state = state or {}
+    plan = read_json(workspace / state.get("plan", {}).get("path", "_worker/plan.json"))
+    wanted = ["实验执行卡.md", "实验指导书.md"]
+    alternatives = {"实验指导书.md": ["实验规划书.md"]}
+    errors: list[str] = []
+    found: list[str] = []
+    for name in wanted:
+        candidates = [name] + alternatives.get(name, [])
+        path = next((workspace / c for c in candidates if (workspace / c).exists()), None)
+        if path is None:
+            errors.append(f"missing {name} (also tried {', '.join(candidates[1:])})"
+                          if candidates[1:] else f"missing {name}")
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace").strip()
+        if len(text) < 200:
+            errors.append(f"{path.name} is too short ({len(text)} chars); "
+                          "produce a usable artifact, not a placeholder")
+        found.append(str(path.name))
+    if isinstance(plan, dict):
+        artifacts = _as_list(plan.get("artifacts"))
+        if artifacts:
+            for item in artifacts:
+                if not (workspace / str(item)).exists():
+                    errors.append(f"plan.artifacts lists missing file: {item}")
+    return {"ok": not errors, "errors": errors, "found": found}
+
+
+def execution_gate(workspace: Path, state: dict | None = None) -> dict:
+    """EXECUTE → WRITE 的硬闸门：实验做完、截图验收通过。
+
+    - 计划里的步骤必须全部完成或明确跳过；
+    - 有证据时，L1 必须全部通过；
+    - 有证据时，`截图验收.md` 必须存在（验收记录是交接给 writer 的依据）；
+    - 无证据的纯文字任务：说明清楚即可放行，不硬凑截图。
+    """
+    state = state or {}
+    plan = read_json(workspace / state.get("plan", {}).get("path", "_worker/plan.json"))
+    plan = plan if isinstance(plan, dict) else {}
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    step_ids = [str(s.get("id", "")) for s in _as_list(plan.get("steps"))
+                if isinstance(s, dict) and s.get("id")]
+    execution = state.get("execution", {}) if isinstance(state, dict) else {}
+    done = set(str(x) for x in execution.get("completed", []))
+    skipped = set(str(x) for x in execution.get("skipped", []))
+    pending = [sid for sid in step_ids if sid not in done | skipped]
+    if pending:
+        errors.append("steps not finished: " + ", ".join(pending[:8]))
+
+    evidence_path = Path(state.get("evidence", {}).get("path", "_worker/evidence.json"))
+    if not evidence_path.is_absolute():
+        evidence_path = workspace / evidence_path
+    manifest = read_json(evidence_path, {})
+    items = manifest.get("items") if isinstance(manifest, dict) else manifest
+    items = _as_list(items)
+    acceptance = workspace / "截图验收.md"
+    if items:
+        ev = check_evidence(manifest, workspace)
+        if not ev.get("ok"):
+            errors.extend(ev.get("errors", []))
+            errors.append(f"L1 evidence passed {ev.get('l1_pass')}/{ev.get('l1_total')}")
+        if not acceptance.exists():
+            errors.append("missing 截图验收.md: verify screenshots before WRITE")
+    else:
+        warnings.append("no evidence items; treating this as a text-only task")
+    if acceptance.exists():
+        text = acceptance.read_text(encoding="utf-8", errors="replace")
+        bad = []
+        for line in text.splitlines():
+            if "不通过" not in line and "待补拍" not in line:
+                continue
+            if re.search(r"(无|没有)\s*(不通过|待补拍)", line):
+                continue
+            bad.append(line.strip())
+        if bad:
+            errors.append("截图验收.md still contains 不通过/待补拍 items: "
+                          + " | ".join(bad[:3]))
+    return {"ok": not errors, "errors": errors, "warnings": warnings,
+            "steps_total": len(step_ids), "steps_done": len(done),
+            "steps_skipped": len(skipped), "evidence_items": len(items)}
+
+
 def check_dod(workspace: Path, state: dict) -> dict:
     reasons: list[str] = []
     plan = read_json(workspace / state.get("plan", {}).get("path", "_worker/plan.json"))
@@ -559,6 +689,15 @@ def check_dod(workspace: Path, state: dict) -> dict:
         reasons.append("plan gate failed")
     if not state.get("plan", {}).get("frozen"):
         reasons.append("plan is not frozen")
+    decisions_result = decision_gate(workspace, state)
+    if not decisions_result.get("ok"):
+        reasons.append("interaction decision gate failed")
+    artifacts_result = plan_artifacts_gate(workspace, state)
+    if not artifacts_result.get("ok"):
+        reasons.append("plan artifacts gate failed (执行卡 + 实验指导书)")
+    execution_result = execution_gate(workspace, state)
+    if not execution_result.get("ok"):
+        reasons.append("execution gate failed (steps/screenshot acceptance)")
     evidence_path = Path(state.get("evidence", {}).get("path", "_worker/evidence.json"))
     if not evidence_path.is_absolute():
         evidence_path = workspace / evidence_path
@@ -592,6 +731,9 @@ def check_dod(workspace: Path, state: dict) -> dict:
         "ok": not reasons,
         "reasons": reasons,
         "plan": plan_result,
+        "decisions": decisions_result,
+        "artifacts": artifacts_result,
+        "execution": execution_result,
         "evidence": evidence_result,
     }
 
@@ -620,6 +762,12 @@ def main() -> int:
     p = sub.add_parser("state")
     p.add_argument("--file", default="_worker/state.json")
     p.set_defaults(cmd_name="state")
+
+    p = sub.add_parser("artifacts")
+    p.set_defaults(cmd_name="artifacts")
+
+    p = sub.add_parser("execution")
+    p.set_defaults(cmd_name="execution")
 
     p = sub.add_parser("step")
     p.add_argument("--step", required=True)
@@ -659,6 +807,12 @@ def main() -> int:
         if not path.is_absolute():
             path = workspace / path
         result = check_state(read_json(path))
+    elif args.cmd_name == "artifacts":
+        state = read_json(workspace / "_worker" / "state.json", {})
+        result = plan_artifacts_gate(workspace, state)
+    elif args.cmd_name == "execution":
+        state = read_json(workspace / "_worker" / "state.json", {})
+        result = execution_gate(workspace, state)
     elif args.cmd_name == "step":
         plan_path = Path(args.plan)
         if not plan_path.is_absolute():

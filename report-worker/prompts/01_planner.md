@@ -7,6 +7,9 @@
 
 - 用户材料：指导书/任务书、模板、评分表、老师通知、已有截图/数据/代码、往届报告；
 - 用户口述：实际设备、替代方案、老师口头要求、分组、交付要求；
+- 五项交互决策（`code_policy`、`delivery.format`、`delivery.editor`、
+  `template_editable`、`formula_editable`）必须已在 `decisions.json` 里；
+  缺了先问用户并用 `worker.py decide` 记录；
 - 依赖 skill：从 `<WS>/_worker/capabilities.json` 的 `skills.report-planner` 取绝对路径，
   读取并遵循其 `SKILL.md` 和 references；不要凭记忆，也不要假设平台注册过。
 
@@ -16,7 +19,10 @@
 2. 再列缺口：缺什么、为什么需要、影响哪一步/哪条证据/哪一章；
 3. 确认真实方案：用户描述 > 指导书/模板；差异逐条记录；
 4. 实验目的逐条核对，不擅自删减；
-5. 主动问成品参考：只用于格式/章节惯例，不抄内容，也可能没用。
+5. 主动问成品参考：只用于格式/章节惯例，不抄内容，也可能没用；
+6. **问代码/实践部分怎么处理**：直接生成可运行代码 / 只给骨架 / 用户写我审。
+   不要默认代写；课程禁止 AI 代写时只做规划、审查和讲解；
+7. **问交付格式、Word/WPS、模板能否改、公式是否可编辑**，一次问完。
 
 把问题和假设写进 `_worker/roles/planner.result.json` 的 `questions`，由总控问用户。
 不要自己在聊天里编答案。
@@ -36,17 +42,22 @@
 
 ## 4. 规划（PLAN）
 
-按 `report-planner` 产出：
+按 `report-planner` 产出，**两份都要**：
 
-- `实验执行卡.md`（默认，给人看）；
-- 可选 `实验规划书.md`（复杂任务/用户要求时）；
+- `实验执行卡.md`（即开即用版，现场照着做）；
+- `实验指导书.md`（完整版；旧名 `实验规划书.md` 也接受）：目的、原理、环境、
+  完整步骤、证据、报告映射、差异/变更；
 - `_worker/plan.json`（给执行器看）。
+
+**只出执行卡会被 `verify.py artifacts` 拒绝冻结。** 交付前把两份文件路径和
+“代码/实践部分怎么处理”一起发给用户确认；用户确认后才 `PLAN_FREEZE`。
 
 ### plan.json 关键字段
 
 ```json
 {
   "version": "1.0",
+  "artifacts": ["实验执行卡.md", "实验指导书.md"],
   "purposes": [{"id": "P1", "text": "", "steps": ["S1"], "evidence": ["E1"]}],
   "stages": [{"id": "ST1", "name": "准备", "steps": ["S1"]}],
   "steps": [{
@@ -65,7 +76,10 @@
      "decision": "skip", "reason": "模板问题；用户确认不保留", "location": ""}
   ],
   "report_map": [{"section": "", "use": ["E1"]}],
-  "writer_figures": []
+  "writer_figures": [],
+  "code_policy": "generate|skeleton|user_writes_review",
+  "delivery": {"format": "doc|docx", "editor": "word|wps",
+               "template_editable": false, "formula_editable": true}
 }
 ```
 
@@ -96,7 +110,7 @@
 {
   "role": "planner",
   "status": "ok | needs_user | blocked",
-  "artifacts": ["实验执行卡.md", "_worker/plan.json"],
+  "artifacts": ["实验执行卡.md", "实验指导书.md", "_worker/plan.json"],
   "summary": "实际方案、目的、步骤数、L1 证据数、主要风险",
   "blockers": [],
   "questions": ["需要用户确认的问题"],

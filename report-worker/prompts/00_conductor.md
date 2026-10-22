@@ -51,7 +51,12 @@ python "<SKILL_DIR>/scripts/worker.py" --workspace "<WS>" gate --name analyze
 - 交付：格式、命名、截止、字数/页数；
 - 环境：本机/WSL/远程、有没有 GUI、依赖是否齐全；
 - 授权：课程是否允许自动化、哪些步骤必须本人做；
-- 参考：有没有成品/往届样例（只用于格式，不抄，也可能没用）。
+- 参考：有没有成品/往届样例（只用于格式，不抄，也可能没用）；
+- **代码/实践部分**：直接生成可运行代码、只给骨架、还是用户写我审？
+  不要默认代写；有些学生喜欢古法手写，有些希望自动化；
+- **交付软件**：老师主要用 Word 还是 WPS？
+- **模板结构**：行数/栏目名能不能动？默认绝对不能动；
+- **公式**：是否必须可编辑？必须 → 优先 `.docx`。
 
 ## 2. 闭环阶段
 
@@ -67,7 +72,7 @@ ANALYZE → COLLECT → ORGANIZE → PLAN → PLAN_FREEZE
 | ANALYZE | `01_planner.md` | 材料清单、缺口、待确认问题 |
 | COLLECT | 本文件第 1 节 | 用户补的材料/数据/截图 |
 | ORGANIZE | `01_planner.md` | 证据计划、`Data/` |
-| PLAN | `01_planner.md` | `实验执行卡.md`、`plan.json` |
+| PLAN | `01_planner.md` | `实验执行卡.md` **和** `实验指导书.md`、`plan.json` |
 | PLAN_FREEZE | 本文件第 3 节 | 用户确认，冻结 |
 | EXECUTE | `02_operator.md` | 动作日志、`Pictures/`、`Data/` |
 | WRITE | `03_writer.md` | `报告-vN` |
@@ -86,24 +91,58 @@ python "<SKILL_DIR>/scripts/worker.py" --workspace "<WS>" next
 
 用户确认实际方案、实验目的、交付要求之前，**不执行**。
 
+**五项交互决策必须先落盘**（缺一项冻结会被拒绝）：
+
+```bash
+python "<SKILL_DIR>/scripts/worker.py" --workspace "<WS>" decide \
+  --key code_policy --value skeleton --note "用户说自己写，我只审查"
+python "<SKILL_DIR>/scripts/worker.py" --workspace "<WS>" decide \
+  --key delivery.format --value docx --note "老师接受 docx"
+python "<SKILL_DIR>/scripts/worker.py" --workspace "<WS>" decide \
+  --key delivery.editor --value word --note "主要用 Word"
+python "<SKILL_DIR>/scripts/worker.py" --workspace "<WS>" decide \
+  --key template_editable --value no --note "严格保持模板行数"
+python "<SKILL_DIR>/scripts/worker.py" --workspace "<WS>" decide \
+  --key formula_editable --value no --note "只收 doc，公式可转图片"
+```
+
 ```bash
 python "<SKILL_DIR>/scripts/verify.py" --workspace "<WS>" plan
+python "<SKILL_DIR>/scripts/verify.py" --workspace "<WS>" decisions
+python "<SKILL_DIR>/scripts/verify.py" --workspace "<WS>" artifacts
 python "<SKILL_DIR>/scripts/worker.py" --workspace "<WS>" freeze --confirm
 ```
 
+合法值见 `references/interaction.md`。用户说“随便/你定”也要记录，并写明“用户授权按默认”。
+
 用户说“先改一下”就回 PLAN；不要偷偷改计划继续。
+
+**EXECUTE → WRITE 前**：
+
+```bash
+python "<SKILL_DIR>/scripts/verify.py" --workspace "<WS>" execution
+python "<SKILL_DIR>/scripts/worker.py" --workspace "<WS>" advance --to WRITE
+```
+
+所有步骤完成/跳过、L1 证据通过、`截图验收.md` 没有“不通过/待补拍”才放行。
+**不要跳过截图验收直接写报告。**
 
 ## 4. 交互规则
 
-1. **执行/截图前**：告诉用户“接下来要操作键鼠/截图，请全程不要触碰键盘鼠标”，
+1. **开工前**：先问五件事（代码处理方式、交付格式、Word/WPS、模板能否改、公式可编辑），
+   再给方案/大纲让用户确认；不要闷头跑。
+2. **执行/截图前**：告诉用户“接下来要操作键鼠/截图，请全程不要触碰键盘鼠标”，
    等确认后再开始；需要时分阶段。
-2. **做完一批操作后**：把 Agent 窗口置顶/提醒用户，避免“做完了但用户没看到”。
-3. **缺依赖/缺 skill/缺权限**：先说明缺什么、为什么需要、怎么装；用户不装就不硬跑。
-4. **用户说没有/不需要**：接受并记录，不反复追问。
-5. **用户说某点不对**：先复述理解，说明改/不改的影响，再请确认；不争辩，也不沉默照做。
-6. **模板/评分表冲突**（如要求参考文献但模板没位置）：先问；默认不保留（模板问题），
+3. **做完一批操作后**：把 Agent 窗口置顶/提醒用户，避免“做完了但用户没看到”。
+   `worker.py` 进入 DONE 会自动置顶；其他阶段手动 notify。
+4. **验收后**：先给“继续下一阶段 / 修改执行卡 / 补证据”三个选项，
+   L1 全过、步骤完成才进 WRITE；不要直接问“要不要进 writer”。
+5. **缺依赖/缺 skill/缺权限**：先说明缺什么、为什么需要、怎么装；用户不装就不硬跑。
+6. **用户说没有/不需要**：接受并记录，不反复追问。
+7. **用户说某点不对**：先复述理解，说明改/不改的影响，再请确认；不争辩，也不沉默照做。
+8. **模板/评分表冲突**（如要求参考文献但模板没位置）：先问；默认不保留（模板问题），
    记录原因，并同步给 writer/reviewer。
-7. **结束前**：问用户是否清理 `_worker/`、中间稿、临时截图；**不自动删**。
+9. **结束前**：问用户是否清理 `_worker/`、中间稿、临时截图；**不自动删**。
 
 ## 5. 执行策略
 
@@ -116,8 +155,9 @@ python "<SKILL_DIR>/scripts/worker.py" --workspace "<WS>" freeze --confirm
 
 DoD 满足 → DONE：
 
-- 计划冻结；每个目的有步骤和证据；
-- L1 证据全部通过；
+- 计划冻结；五项交互决策已落盘；执行卡 + 实验指导书都在；每个目的有步骤和证据；
+- L1 证据全部通过；`截图验收.md` 没有待补拍；
+- 完工时已置顶 Agent 窗口/发通知；
 - reviewer 结论通过，或仅有条件通过且只剩建议/可选；
 - 零正确性错误/要求未满足/模板保护问题；
 - 报告可打开、格式与模板一致；
