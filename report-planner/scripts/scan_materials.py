@@ -483,7 +483,7 @@ def build_markdown(records: list[dict], args: argparse.Namespace) -> str:
         "1. 先看《指导书/任务书》《报告模板》《评分表》三类文件；",
         "2. 找不到的用 `report-planner` 的追问清单集中问一次；",
         "3. 旧格式先用 Word 另存为 .docx，或 LibreOffice 转换后再扫描；",
-        "4. 成品报告只参考格式，不作为内容或数据来源。",
+        "4. 成品报告只参考同类型作业的格式，不作为内容或数据来源。",
         "",
     ])
     return "\n".join(lines)

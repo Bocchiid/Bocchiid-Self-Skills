@@ -12,7 +12,7 @@
 - 调用 planner 出**执行卡 + 实验指导书**（只出执行卡会被 `artifacts` 闸门拒绝）；
 - 执行实验/任务，CLI 为主、GUI 补视觉证据，截图只截核心；分阶段验收，
   **L1 截图没通过不能进 writer**；
-- 调用 writer 写报告、reviewer 审核；
+- 调用 writer 写报告、reviewer 审核；reviewer **每轮独立评分**，不继承上一轮分数；
 - 把审核发现路由回执行/证据/写作/规划，只重跑受影响的下游；
 - 完工时把 Agent 窗口置顶/发通知。
 
@@ -46,6 +46,7 @@ report-worker/
 - 截图：Pillow（推荐）；
 - Windows GUI：pywin32（基础键鼠/窗口）；可选 pywinauto/mss/opencv；
 - 报告：python-docx；`.doc` 需要 Word COM 或 LibreOffice；
+- 去 AI 味（可选）：[unslop](https://github.com/theclaymethod/unslop) skill；已装则 writer 自动使用、不提醒，未装由 writer 一次性提醒，不装跳过；
 - 不强制 WSL/Linux；需要时先问你，不擅自装系统包。
 
 ```bash
@@ -82,7 +83,7 @@ python scripts/worker.py --workspace /path/to/task gate --name decisions
 - **做完后**：把 Agent 窗口置顶/提醒用户；
 - 缺依赖/缺 skill/缺权限：先问，不装就不硬跑；
 - 用户说某点不对：复述理解 + 影响，再确认；
-- 模板/评分表冲突：先问，默认不保留（模板问题），记录原因；
+- 模板/评分表冲突：**评分表不一定正确**；先说明影响并请用户确认，不自行取舍、不默认保留或删除，记录原因；
 - 结束前问是否清理 `_worker/` 和中间文件，**不自动删**。
 
 ## 执行策略

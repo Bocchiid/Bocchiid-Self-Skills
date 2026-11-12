@@ -28,7 +28,7 @@ worker 不重复 planner/writer/reviewer 的规则，只做四件事：
 3. 交付：格式、命名、截止、字数/页数；
 4. 环境：本机/WSL/远程、有没有 GUI、依赖；
 5. 授权：课程是否允许自动化、哪些步骤必须本人做；
-6. 参考：往届成品/老师样例（只参考格式）；
+6. 参考：往届成品/老师样例（**只用同类型**：实验/调研/课程论文分开；只参考格式）；
 7. **代码/实践部分**：代写 / 骨架 / 用户写我审？
 8. **交付软件**：Word 还是 WPS？
 9. **模板结构**：行数/栏目名能不能动？默认不能。
@@ -41,7 +41,7 @@ python scripts/worker.py --workspace <WS> decide --key code_policy --value skele
 python scripts/worker.py --workspace <WS> decide --key delivery.format --value docx --note "老师接受 docx"
 ```
 
-**依赖检查**：worker 需要 planner/writer/reviewer；找不到先问用户安装/复制，缺依赖不硬跑。
+**依赖检查**：worker 需要 planner/writer/reviewer；找不到先问用户安装/复制，缺依赖不硬跑。`unslop` 是 writer 的**可选**依赖：已安装就直接用、不提醒；未安装由 writer 一次性提醒用户安装（推荐），用户不装就跳过。
 
 ## 二、闭环与硬闸门
 
@@ -113,6 +113,7 @@ python scripts/verify.py --workspace <WS> execution
   - 计划缺步骤/证据 → PLAN；
   - WPS 实机/需求冲突/无法判断 → WAITING_USER。
 - 同一问题连续 2 轮没修好 → BLOCKED；只重跑受影响的下游。
+- **每轮审核独立评分**：reviewer 重新读报告和本轮要求，不继承上一轮分数/档位；旧审核报告只用于核对修复情况。
 
 ## 六、环境、崩溃与日志
 
